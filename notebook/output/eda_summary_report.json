@@ -1,0 +1,63 @@
+{
+  "project": "IT Job Data Lakehouse - Silver Layer EDA & Transformation",
+  "execution_time": "2026-10-05T17:46:24.231451",
+  "total_raw_jobs": 8064,
+  "total_silver_jobs": 8064,
+  "platform_breakdown": {
+    "topdev": 3865,
+    "topcv": 2752,
+    "vietnamworks": 778,
+    "itviec": 669
+  },
+  "city_breakdown": {
+    "Hà Nội": 3551,
+    "TP. Hồ Chí Minh": 2926,
+    "Khác / Chưa rõ": 960,
+    "Hải Phòng": 166,
+    "Đà Nẵng": 163
+  },
+  "top_10_skills": [
+    "Machine Learning / AI",
+    "Business Analyst (BA)",
+    "SQL",
+    "QA / QC / Tester",
+    "Python",
+    "Java",
+    "UI/UX Design",
+    "Linux",
+    "System / Network Engineer",
+    "CI/CD"
+  ],
+  "quality_metrics": [
+    {
+      "Thuộc tính": "Mức Lương (Salary Info)",
+      "Tiêu chí chất lượng": "Có khoảng số VNĐ hoặc cờ Thoả thuận",
+      "Số lượng đạt chuẩn": 8064,
+      "Tỷ lệ khả dụng (%)": 100.0
+    },
+    {
+      "Thuộc tính": "Địa điểm (Standardized City)",
+      "Tiêu chí chất lượng": "Quy chuẩn về tỉnh thành/trung tâm IT rõ ràng",
+      "Số lượng đạt chuẩn": 7104,
+      "Tỷ lệ khả dụng (%)": 88.1
+    },
+    {
+      "Thuộc tính": "Kỹ năng Công nghệ (Tech Skills)",
+      "Tiêu chí chất lượng": "Trích xuất ít nhất 1 kỹ năng chuẩn Taxonomy",
+      "Số lượng đạt chuẩn": 2716,
+      "Tỷ lệ khả dụng (%)": 33.68
+    },
+    {
+      "Thuộc tính": "Kinh nghiệm (Experience Range)",
+      "Tiêu chí chất lượng": "Có số năm min hoặc max cụ thể",
+      "Số lượng đạt chuẩn": 7344,
+      "Tỷ lệ khả dụng (%)": 91.07
+    },
+    {
+      "Thuộc tính": "Cấp bậc (Job Level)",
+      "Tiêu chí chất lượng": "Phân cấp rõ (Intern, Fresher, Jr, Mid, Sr, Lead)",
+      "Số lượng đạt chuẩn": 5461,
+      "Tỷ lệ khả dụng (%)": 67.72
+    }
+  ]
+}

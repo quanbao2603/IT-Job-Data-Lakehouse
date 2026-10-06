@@ -1,0 +1,17 @@
+# File biến môi trường chứa API Key (Gemini, OpenAI), mật khẩu MinIO/PostgreSQL
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# File Cookie chứa phiên đăng nhập cá nhân các sàn (ITViec, TopCV, TopDev, VNWorks)
+*cookie*.txt
+cookie.txt
+cookies.txt
+*.cookie
+
+# File khóa bảo mật, chứng chỉ SSL
+*.pem
+*.key
+*.crt
+*.cert

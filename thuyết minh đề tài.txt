@@ -1,0 +1,77 @@
+HỆ THỐNG DATA LAKEHOUSE TỔNG HỢP, PHÂN TÍCH THỊ TRƯỜNG VIỆC LÀM IT VÀ TÍCH HỢP TRỢ LÝ AI 
+Nhóm sinh viên thực hiện:
+1. Nguyễn Quân Bảo - 23110181
+2. Nguyễn Hữu Thưởng - 23110338
+1. Lý do chọn đề tài
+Thị trường lao động ngành Công nghệ thông tin (CNTT) luôn có tính biến động cao nhất về mặt công nghệ (Tech Stack) và đãi ngộ. Hiện nay, dữ liệu tuyển dụng (Job Description - JD) đang nằm rải rác trên nhiều nền tảng (ITViec, TopCV, VietnamWorks), gây khó khăn cho việc nghiên cứu thị trường của người lao động.
+Các nền tảng tuyển dụng hiện tại chỉ cung cấp bộ lọc tìm kiếm đơn giản, thiếu đi khả năng tổng hợp dữ liệu vĩ mô. Người dùng không thể trả lời được những câu hỏi mang tính phân tích như: "Mức lương trung bình của Data Engineer 2 năm kinh nghiệm tại TP.HCM trong 6 tháng qua biến động thế nào?" hay "Tỷ lệ các công ty yêu cầu kỹ năng AWS so với Azure là bao nhiêu?".
+Để giải quyết bài toán này, việc xây dựng một kho dữ liệu tập trung là bắt buộc. Tuy nhiên, JD chủ yếu là dữ liệu văn bản phi cấu trúc, đòi hỏi một kiến trúc lưu trữ hiện đại hơn cơ sở dữ liệu quan hệ. Do đó, đề tài lựa chọn kiến trúc Data Lakehouse (mô hình Medallion) để thu thập, làm sạch và tổ chức dữ liệu. Đồng thời, thay vì chỉ cung cấp các Dashboard tĩnh khô khan, đề tài tích hợp AI Agent ứng dụng công nghệ Text-to-SQL, cho phép người dùng truy vấn trực tiếp vào cơ sở dữ liệu bằng ngôn ngữ tự nhiên để lấy số liệu thống kê.
+2. Mục tiêu nghiên cứu
+Mục tiêu hạ tầng (Data Engineering): Xây dựng thành công Pipeline tự động cào dữ liệu tuyển dụng từ đa nguồn; tổ chức lưu trữ và xử lý dữ liệu lớn qua 3 tầng (Bronze, Silver, Gold) đảm bảo tính ACID bằng công nghệ Delta Lake.
+Mục tiêu xử lý dữ liệu (Data Processing): Ứng dụng sức mạnh của Large Language Model (LLM) qua API để tự động bóc tách (Extract) và chuẩn hóa danh sách kỹ năng, mức lương từ các văn bản JD thô hỗn độn, thay thế cho các phương pháp Regex truyền thống.
+Mục tiêu ứng dụng (AI & Analytics): Phát triển một AI Agent có khả năng hiểu câu hỏi của người dùng, tự động chuyển đổi thành câu lệnh SQL, truy vấn vào Data Mart (tầng Gold) và tổng hợp thành câu trả lời chính xác, giảm thiểu hiện tượng ảo giác (Hallucination).
+3. Các giai đoạn thực hiện (Tiểu luận chuyên ngành)
+Giai đoạn 1: Xây dựng Ingestion Pipeline & Tầng Bronze:
+Cấu hình hạ tầng lưu trữ MinIO (Object Storage).
+Viết các luồng Crawler (Python, Selenium/Playwright) lấy dữ liệu tự động, lưu trữ file dạng nguyên bản (JSON/HTML thô) vào tầng Bronze.
+Giai đoạn 2: Phát triển luồng ETL và Tầng Silver (Chuẩn hóa):
+Sử dụng PySpark đọc dữ liệu từ Bronze.
+Gọi API LLM (Gemini Flash/GPT-4o-mini) xử lý hàng loạt để bóc tách các thực thể: Mức lương (quy đổi tỷ giá), Số năm kinh nghiệm, Danh sách kỹ năng (Tech Stack).
+Lưu dữ liệu đã có cấu trúc vào tầng Silver dưới dạng Delta format.
+Giai đoạn 3: Xây dựng Data Marts (Tầng Gold) và AI Agent:
+Tổng hợp dữ liệu từ Silver thành các bảng Fact và Dimension tối ưu cho nghiệp vụ đọc (Tầng Gold).
+Phát triển LLM Agent bằng LangChain, cấp quyền "Tool Calling" để Agent có thể gọi hàm truy vấn SQL.
+Triển khai giao diện người dùng bằng Streamlit (bao gồm Dashboard BI và Chatbot).
+4. Xây dựng Kho dữ liệu và Pipeline tự động
+
+Thành phần kiến trúc
+Công nghệ sử dụng
+Vai trò chi tiết trong hệ thống
+Data Ingestion
+Python (Requests, Selenium)
+Khai thác dữ liệu JD đa nền tảng (ITViec, TopCV). Thu thập theo cơ chế Incremental Load (chỉ lấy tin tuyển dụng mới mỗi ngày).
+Workflow Orchestration
+Apache Airflow
+Lên lịch chạy các DAGs, điều phối tự động luồng ETL từ lúc cào dữ liệu đến lúc cập nhật vào kho Data Lakehouse.
+Data Storage (Lake)
+MinIO
+Lưu trữ file phi cấu trúc, đóng vai trò như HDFS/S3, quản lý các bucket cho Bronze, Silver, Gold.
+Data Processing (ETL)
+Apache Spark (PySpark)
+Xử lý dữ liệu phân tán, làm sạch text, join các bảng, tính toán thống kê và transform dữ liệu với tốc độ cao.
+Table Format
+Delta Lake
+Cung cấp khả năng ACID (Update/Delete/Merge) trên Data Lake, quản lý schema evolution và time travel.
+Skill Extraction (LLM)
+Gemini API / OpenAI API
+Đẩy đoạn text mô tả công việc vào LLM với System Prompt để trích xuất mảng kỹ năng và chuẩn hóa thông tin lương.
+AI Agent Logic
+LangChain / LlamaIndex
+Thiết lập Agentic Workflow, kết nối LLM với cơ sở dữ liệu để thực hiện Text-to-SQL.
+Data Serving/UI
+Streamlit, Plotly
+Xây dựng giao diện Web app trực quan hóa dữ liệu và giao diện hội thoại với Agent.
+
+
+5. Cấu trúc lưu trữ và kiến trúc hệ thống dự kiến
+5.1 Kiến trúc Medallion Data Lakehouse
+Tầng Bronze (Raw Layer): Lưu trữ thô theo định dạng raw_jobs_YYYYMMDD.json. Giữ nguyên mọi trường HTML, description, tránh mất mát dữ liệu gốc.
+Tầng Silver (Cleaned Layer): Chứa các bảng Delta đã chuẩn hóa:
+dim_company: Thông tin công ty.
+fact_jobs: job_id, title, location, min_salary, max_salary_vnd, exp_required.
+bridge_job_skills: job_id, skill_name (Ví dụ: 101, 'Python').
+Tầng Gold (Aggregated Layer): Các bảng Data Mart tối ưu cho BI và Agent:
+mart_salary_trends: Thống kê lương trung bình, trung vị (median) theo tháng, vị trí, cấp bậc (Fresher/Junior/Senior).
+mart_skill_demands: Đếm tần suất xuất hiện của kỹ năng theo từng vị trí cụ thể.
+5.2 Kiến trúc AI Agent (Text-to-SQL)
+Tiếp nhận: Người dùng nhập prompt (Ví dụ: "Năm 2026, Backend Developer yêu cầu những kỹ năng nào nhiều nhất?").
+Phân tích (Reasoning): LLM phân tích ý định, nhận diện đây là câu hỏi thống kê.
+Thực thi (Action): Dùng Tool Query_Gold_Database. LLM tự sinh câu lệnh: SELECT skill_name, COUNT(*) FROM mart_skill_demands WHERE role='Backend' GROUP BY skill_name ORDER BY count DESC LIMIT 5.
+Phản hồi (Observation & Response): Hệ thống chạy SQL, trả kết quả dạng JSON về cho LLM. LLM tổng hợp lại thành câu trả lời tự nhiên cho người dùng.
+6. Hướng phát triển thành Đồ án tốt nghiệp (KLTN)
+Nâng cấp 1: Chuyển đổi sang Streaming Data Pipeline (Real-time). Thay vì chạy batch định kỳ (mỗi ngày 1 lần), hệ thống sẽ tích hợp Apache Kafka và Spark Structured Streaming để bắt các luồng tin tuyển dụng mới xuất hiện theo thời gian thực (near real-time) và cập nhật thẳng vào Lakehouse.
+Nâng cấp 2: Xây dựng Hệ thống Đa Tác tử (Multi-Agent System). Thay vì 1 Agent sinh SQL đơn giản, hệ thống sẽ gồm nhiều Agent phối hợp:
+Data Analyst Agent: Chuyên dịch câu hỏi ra SQL truy vấn số liệu tầng Gold (như TLCN).
+Market Researcher Agent: Ứng dụng kỹ thuật RAG (Retrieval-Augmented Generation) trên vector database chứa văn bản tầng Silver. Trả lời các câu hỏi định tính: "Môi trường làm việc của công ty X được mô tả thế nào?" hoặc "Soft skill nào đang được các công ty tài chính nhấn mạnh?".
+Mock Interviewer Agent: Người dùng upload 1 đường link JD cụ thể. Agent đọc JD, phân tích Tech stack yêu cầu và đóng vai nhà tuyển dụng để đặt câu hỏi phỏng vấn thử (Mock Interview) trực tiếp với người dùng.
+
