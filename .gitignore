@@ -1,0 +1,8 @@
+lakehouse_env/
+data/
+backups/
+*.log
+__pycache__/
+*.pyc
+active_env.txt
+.env

@@ -1,0 +1,16 @@
+services:
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    container_name: datalake-minio
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"   # Cổng S3 API: Chỉ chấp nhận kết nối nội bộ
+      - "127.0.0.1:9001:9001"   # Cổng Console: Bảo vệ nội bộ, chống quét mạng Internet
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Public URL used only for Console redirects; S3 API stays localhost-only.
+      MINIO_BROWSER_REDIRECT_URL: https://womtech.io.vn/minio/ui
+    volumes:
+      - ../data/minio_storage:/data
+    command: server /data --console-address ":9001"
