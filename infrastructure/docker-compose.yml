@@ -9,8 +9,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      # Public URL used only for Console redirects; S3 API stays localhost-only.
-      MINIO_BROWSER_REDIRECT_URL: https://womtech.io.vn/minio/ui
+      # Set the public HTTPS Console URL on VPS; local default stays local.
+      MINIO_BROWSER_REDIRECT_URL: ${MINIO_BROWSER_REDIRECT_URL:-http://localhost:9001}
     volumes:
       - ../data/minio_storage:/data
     command: server /data --console-address ":9001"

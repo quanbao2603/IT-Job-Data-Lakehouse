@@ -6,3 +6,10 @@ __pycache__/
 *.pyc
 active_env.txt
 .env
+.env.*
+
+# Runtime credentials/session material
+src/crawlers/cookies/
+
+# Local environment templates are safe to commit explicitly
+!.env.example
