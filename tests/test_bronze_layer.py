@@ -13,10 +13,12 @@ from src.storage.compaction_engine import CompactionEngine
 from src.crawlers.base_crawler import BaseCrawler
 
 
-def _multiprocess_lock_worker(db_path: str, source_name: str, run_id: str, queue) -> None:
+def _multiprocess_lock_worker(db_path: str, source_name: str, run_id: str, queue, barrier) -> None:
     mgr = StateManager(db_path=db_path)
     res = mgr.acquire_run_lock(source_name, run_id=run_id)
     queue.put(res)
+    # Keep the winner alive while the other process finishes its lock attempt.
+    barrier.wait(timeout=5)
 
 
 class TestMetadataEnvelope(unittest.TestCase):
@@ -154,9 +156,10 @@ class TestStateManager(unittest.TestCase):
     def test_multiprocess_concurrency_race(self):
         ctx = mp.get_context("spawn" if os.name == "nt" else "fork")
         q = ctx.Queue()
+        barrier = ctx.Barrier(2)
 
-        p1 = ctx.Process(target=_multiprocess_lock_worker, args=(self.temp_db_path, "topcv", "run_p1", q))
-        p2 = ctx.Process(target=_multiprocess_lock_worker, args=(self.temp_db_path, "topcv", "run_p2", q))
+        p1 = ctx.Process(target=_multiprocess_lock_worker, args=(self.temp_db_path, "topcv", "run_p1", q, barrier))
+        p2 = ctx.Process(target=_multiprocess_lock_worker, args=(self.temp_db_path, "topcv", "run_p2", q, barrier))
 
         p1.start()
         p2.start()
@@ -354,7 +357,21 @@ class TestCrawlerGeneratorStreaming(unittest.TestCase):
                 for i in range(25):
                     yield {"job_id": f"job_{i}", "posted_date_iso": "2026-11-06T10:00:00Z"}
 
+        class ConsumingWriter:
+            def write_atomic(self, source, records, run_id=None):
+                rows = list(records)
+                return {
+                    "status": "COMMITTED",
+                    "source": source,
+                    "bronze_s3_uri": f"s3://bronze/{source}/test.jsonl.gz",
+                    "bronze_key": f"{source}/test.jsonl.gz",
+                    "records_count": len(rows),
+                    "compressed_size_bytes": 1000,
+                    "file_checksum_sha256": "mock_sha",
+                }
+
         crawler = HeartbeatCrawler(self.temp_db_path)
+        crawler.writer = ConsumingWriter()
         crawler.state_manager.heartbeat = MagicMock(wraps=crawler.state_manager.heartbeat)
         res = crawler.run(mode="incremental")
         self.assertEqual(res["status"], "SUCCESS")

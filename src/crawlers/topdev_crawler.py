@@ -405,6 +405,7 @@ class TopDevCrawler(BaseCrawler):
         print(f"[*] Bắt đầu quét TopDev qua 13 nhóm ngành IT - Chế độ: {mode_label} (Tối đa {max_pages} trang)...")
 
         seen_job_ids = set()
+        scraped_jobs = []
         watermark_hit = False
 
         for page in range(1, max_pages + 1):
@@ -465,8 +466,12 @@ class TopDevCrawler(BaseCrawler):
                     print(f"       [✓] Job[{jid}] {item['job_title'][:35]} | {item['company_name'][:20]} | Lương: {item['salary'] or 'Thoả thuận'} | Skills: [{skills_preview}]")
 
             print(f"      [✓] Trang {page}: Thu thập thành công {new_in_page} tin tuyển dụng IT mới.")
+            self.heartbeat()
 
             if watermark_hit:
+                break
+            if new_in_page == 0:
+                print("      [!] Không có tin mới ở trang này; dừng phân trang để tránh vòng lặp.")
                 break
 
             time.sleep(random.uniform(self.REQUEST_DELAY_MIN, self.REQUEST_DELAY_MAX))

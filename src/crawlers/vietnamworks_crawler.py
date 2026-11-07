@@ -475,6 +475,7 @@ class VietnamWorksCrawler(BaseCrawler):
 
                 candidates.extend(page_candidates)
                 print(f"[✓ Phát hiện +{len(page_candidates)} tin mới]")
+                self.heartbeat()
 
                 if watermark_hit:
                     break

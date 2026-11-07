@@ -218,17 +218,12 @@ class StateManager:
             cursor = conn.cursor()
             cursor.execute("BEGIN IMMEDIATE")
 
+            # The partial unique index is the lock decision. Do not use a
+            # SELECT-then-INSERT check: two processes can observe the same gap.
             cursor.execute("""
-                SELECT run_id, process_id, started_at
-                FROM ingestion_runs
-                WHERE source_name = ? AND status = 'RUNNING'
-                LIMIT 1
-            """, (source_clean,))
-            active = cursor.fetchone()
-
-            if active:
-                conn.rollback()
-                return None
+                INSERT INTO ingestion_runs (run_id, source_name, mode, started_at, status, process_id, heartbeat_at)
+                VALUES (?, ?, ?, ?, 'RUNNING', ?, ?)
+            """, (active_run_id, source_clean, mode, now_str, current_pid, now_str))
 
             cursor.execute("""
                 INSERT INTO ingestion_state (source_name, last_run_status, updated_at)
@@ -238,16 +233,19 @@ class StateManager:
                     updated_at = excluded.updated_at
             """, (source_clean, now_str))
 
-            cursor.execute("""
-                INSERT INTO ingestion_runs (run_id, source_name, mode, started_at, status, process_id, heartbeat_at)
-                VALUES (?, ?, ?, ?, 'RUNNING', ?, ?)
-            """, (active_run_id, source_clean, mode, now_str, current_pid, now_str))
-
             conn.commit()
             self._active_runs[source_clean] = active_run_id
             return active_run_id
 
-        except (sqlite3.IntegrityError, sqlite3.OperationalError):
+        except sqlite3.IntegrityError:
+            # Another process owns the source lease. The transaction is
+            # rolled back, so this attempt leaves no RUNNING row behind.
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return None
+        except sqlite3.OperationalError:
             try:
                 conn.rollback()
             except Exception:
@@ -281,30 +279,14 @@ class StateManager:
         run_id: Optional[str] = None,
         mode: str = "incremental"
     ) -> str:
-        now_dt = datetime.utcnow()
-        now_str = now_dt.isoformat() + "Z"
-        source_clean = source_name.lower().strip()
-
-        self._recover_stale_runs(source_clean)
-        active_run_id = run_id or f"{source_clean}_{mode}_{now_dt.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:4]}"
-        self._active_runs[source_clean] = active_run_id
-
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO ingestion_state (source_name, last_run_status, updated_at)
-                VALUES (?, 'RUNNING', ?)
-                ON CONFLICT(source_name) DO UPDATE SET
-                    last_run_status = 'RUNNING',
-                    updated_at = excluded.updated_at
-            """, (source_clean, now_str))
-
-            cursor.execute("""
-                INSERT INTO ingestion_runs (run_id, source_name, mode, started_at, status, process_id, heartbeat_at)
-                VALUES (?, ?, ?, ?, 'RUNNING', ?, ?)
-            """, (active_run_id, source_clean, mode, now_str, os.getpid(), now_str))
-            conn.commit()
-
+        """Compatibility wrapper that uses the same exclusive lock path."""
+        active_run_id = self.acquire_run_lock(
+            source_name=source_name,
+            run_id=run_id,
+            mode=mode,
+        )
+        if not active_run_id:
+            raise RuntimeError(f"Concurrent run active for source {source_name}")
         return active_run_id
 
     def commit_success(

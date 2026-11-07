@@ -22,6 +22,13 @@ class BaseCrawler(abc.ABC):
         self.source_name = source_name.lower().strip()
         self.state_manager = StateManager()
         self.writer = AtomicWriter()
+        self._current_run_id: Optional[str] = None
+
+    def heartbeat(self) -> bool:
+        """Refresh the active run lease during fetch or write progress."""
+        if not self._current_run_id:
+            return False
+        return self.state_manager.heartbeat(self._current_run_id)
 
     @abc.abstractmethod
     def fetch_jobs(
@@ -51,6 +58,9 @@ class BaseCrawler(abc.ABC):
                 "message": f"Concurrent run active for source {self.source_name}",
                 "records_ingested": 0
             }
+
+        self._current_run_id = run_id
+        self.heartbeat()
 
         watermark_info = self.state_manager.get_watermark(self.source_name)
         watermark_ts = watermark_info.get("last_watermark_ts") if watermark_info else None
@@ -156,3 +166,5 @@ class BaseCrawler(abc.ABC):
             self.state_manager.mark_failure(self.source_name, run_id=run_id, error_message=str(e))
             print(f"\n❌ LỖI TRONG QUÁ TRÌNH CÀO [{self.source_name.upper()}]: {e}")
             raise
+        finally:
+            self._current_run_id = None

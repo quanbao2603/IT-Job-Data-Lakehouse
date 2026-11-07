@@ -22,7 +22,7 @@ from src.crawlers.base_crawler import BaseCrawler
 
 class TopCVCrawler(BaseCrawler):
     BASE_URL = "https://www.topcv.vn"
-    SEARCH_BASE = "https://www.topcv.vn/tim-kiem-viec-lam-it?sort=top_related&category_family=cr257&page={page}"
+    SEARCH_BASE = "https://www.topcv.vn/tim-viec-lam-it?page={page}"
     REQUEST_DELAY_MIN = 1.0
     REQUEST_DELAY_MAX = 1.8
 
@@ -283,6 +283,7 @@ class TopCVCrawler(BaseCrawler):
                     job_links.append(href)
 
             print(f"      [✓] Trang {page} phát hiện {len(job_links)} tin tuyển dụng mới.")
+            self.heartbeat()
 
             if not job_links and not watermark_hit:
                 print(f"      [!] Đã hết tin phân trang tại trang {page}. Dừng quét.")

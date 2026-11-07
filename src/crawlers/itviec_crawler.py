@@ -300,6 +300,7 @@ class ITViecCrawler(BaseCrawler):
                         page_urls.append(full_u)
 
             print(f"      [✓] Trang {page} phát hiện {len(page_urls)} tin thực tế mới.")
+            self.heartbeat()
 
             if not page_urls and not watermark_hit:
                 print(f"      [!] Đã hết tin phân trang tại trang {page}. Dừng quét.")
