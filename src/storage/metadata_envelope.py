@@ -59,6 +59,14 @@ class MetadataEnvelope:
             "deadline_source", "updated_date", "industries", "card_meta_raw",
             "description", "requirements", "benefits", "job_info_raw",
             "posted_date_iso", "valid_through", "employment_type"
+        },
+        "upzi": {
+            "platform", "job_id", "job_url", "scraped_at", "content_hash",
+            "job_title", "company_name", "company_id", "company_url", "company_logo",
+            "salary", "job_location", "job_location_structured", "deadline",
+            "deadline_source", "updated_date", "industries", "card_meta_raw",
+            "description", "requirements", "benefits", "job_info_raw",
+            "posted_date_iso", "valid_through", "employment_type"
         }
     }
 
