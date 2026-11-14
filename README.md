@@ -24,6 +24,7 @@ Các thành phần chính:
 - `tests/`: test suite của tầng Bronze.
 - `infrastructure/docker-compose.yml`: MinIO chạy nội bộ trên VPS.
 - `docs/bronze-architecture-review.md`: review kiến trúc và bằng chứng kiểm tra Bronze.
+- `docs/architecture-handoff-ai.md`: bản quét cấu trúc, data-flow và architecture handoff cho AI khác.
 
 Payload Bronze hiện là **extracted observation payload** theo từng crawl run. Cookie/session, `.env`, SQLite runtime, MinIO objects, log và virtualenv không thuộc Git repository.
 
