@@ -1,6 +1,7 @@
 lakehouse_env/
 data/
 backups/
+backup/
 *.log
 __pycache__/
 *.pyc
