@@ -66,7 +66,7 @@ Hệ thống **Data Lakehouse** thu thập và phân tích dữ liệu việc l�
 ```bash
 # 1. Unit tests
 python -m unittest discover -s tests -v
-# Phải: 17 passed, 0 failed trên Linux/VPS (Windows local có 4 lỗi encoding print — xem CURRENT_STATUS mục 2)
+# Phải: 24 passed, 0 failed (Windows local có thể lỗi encoding print emoji — xem CURRENT_STATUS mục 2)
 
 # 2. Compile check
 python -m compileall -q src tests

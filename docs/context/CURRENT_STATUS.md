@@ -51,7 +51,7 @@ Tests quan trọng:
   ✅ fetch_phase_heartbeat_test
 ```
 
-> **`[UPDATE 14/11/2026 — đối chiếu repo mới]`**: `tests/test_bronze_layer.py` hiện có **17 test methods** (chạy trên Windows local: 13 pass + 4 lỗi encoding `print` emoji khi stdout bị pipe; chưa kiểm chứng lại trên VPS/Linux). Bản project cũ trong `backup/tests/` có **20 test**; 3 test chưa được port sang repo mới: `test_fetch_phase_heartbeat_progress`, `test_partial_unique_index_schema_exists`, `test_stress_concurrency_race`. Cần port lại trước khi nghiệm thu Bronze.
+> **`[UPDATE 14/11/2026 — gói sửa Giai đoạn 5]`**: CompactionEngine trước đó **không chạy được thật**: gọi `stream_bronze_records()` chưa tồn tại trong AtomicWriter, thiếu tham số `bytes_saved` khi ghi audit (TypeError), bộ lọc tệp đã gom không bao giờ khớp (nguy cơ gộp trùng gây nhân đôi bản ghi), mặc định `purge_small_files=True` trái D-11. Đã sửa toàn bộ + thêm đối soát record count trên object đã commit và verify archive copy trước khi gỡ tệp gốc (fail-closed). AtomicWriter bổ sung `stream_bronze_records()` và tham số `target_bronze_key` (tệp gom nằm đúng partition nguồn theo thiết kế Notion). Test suite hiện **24 tests**: đã port 3 test rơi trong migration (`test_partial_unique_index_schema_exists`, `test_stress_concurrency_race`, `test_fetch_phase_heartbeat_progress`) + 4 test compaction mới.
 
 ## 3. Dữ liệu Bronze hiện tại `[CONFIRMED — 08/11/2026]`
 

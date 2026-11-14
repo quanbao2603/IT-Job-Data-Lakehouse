@@ -58,17 +58,25 @@ class CompactionEngine:
         self,
         partition_prefix: str,
         min_files_threshold: int = 2,
-        purge_small_files: bool = True,
-        archive_small_files: bool = False
+        purge_small_files: bool = False,
+        archive_small_files: bool = True
     ) -> Dict[str, Any]:
+        """
+        Gom tệp nhỏ theo giao thức Verified Stream Compaction 6 bước (Notion Giai đoạn 5):
+        quét-lọc → stream merge → đối soát record count trên object đã commit →
+        audit + manifest → đánh dấu compacted → lifecycle tệp nguồn (archive/pause/keep).
+        Mặc định archive theo D-11: sao chép sang prefix archive/ và verify trước khi gỡ tệp gốc.
+        """
         prefix = partition_prefix.strip("/")
         parts = prefix.split("/")
         source_name = parts[0] if parts else "unknown"
 
+        # Bước 1: Quét & lọc phân vùng — bỏ qua tệp đã gom (basename bắt đầu bằng part_compacted_)
         objects = list(self.client.list_objects(self.bronze_bucket, prefix=prefix, recursive=True))
         small_files = [
             obj.object_name for obj in objects
-            if obj.object_name.endswith(".jsonl.gz") and not obj.object_name.startswith("compacted_")
+            if obj.object_name.endswith(".jsonl.gz")
+            and not os.path.basename(obj.object_name).startswith("part_compacted_")
         ]
 
         if len(small_files) < min_files_threshold:
@@ -80,6 +88,7 @@ class CompactionEngine:
 
         old_total_bytes = sum(obj.size for obj in objects if obj.object_name in small_files)
 
+        # Bước 2: Stream Merge qua generator (bounded memory)
         def merged_records_stream():
             for obj_key in small_files:
                 for record in self.writer.stream_bronze_records(obj_key):
@@ -87,24 +96,39 @@ class CompactionEngine:
 
         timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         compacted_run_id = f"compacted_{timestamp}_{uuid.uuid4().hex[:6]}"
+        target_bronze_key = f"{prefix}/part_{compacted_run_id}.jsonl.gz"
 
         write_result = self.writer.write_atomic(
             source=source_name,
             records=merged_records_stream(),
-            run_id=compacted_run_id
+            run_id=compacted_run_id,
+            target_bronze_key=target_bronze_key
         )
 
         total_records = write_result["records_count"]
         compacted_key = write_result["bronze_key"]
 
+        # Bước 3: Đối soát record count bằng cách đọc lại object đã commit trên Bronze (Fail-Closed)
+        verified_count = sum(1 for _ in self.writer.stream_bronze_records(compacted_key))
+        if verified_count != total_records:
+            self.client.remove_object(self.bronze_bucket, compacted_key)
+            raise IOError(
+                f"Compaction record count mismatch: kỳ vọng {total_records}, thực tế {verified_count}. "
+                f"Đã xóa tệp gom lỗi '{compacted_key}', giữ nguyên tệp nguồn để điều tra."
+            )
+
+        bytes_saved = max(0, old_total_bytes - write_result["compressed_size_bytes"])
+
+        # Bước 4: Ghi nhận kiểm toán & manifest sau khi đối soát đạt
         self.state_manager.log_compaction(
+            compaction_id=compacted_run_id,
             partition_prefix=prefix,
             files_merged_count=len(small_files),
             total_records=total_records,
             old_total_bytes=old_total_bytes,
             new_compacted_bytes=write_result["compressed_size_bytes"],
-            compacted_key=compacted_key,
-            compaction_id=compacted_run_id
+            bytes_saved=bytes_saved,
+            compacted_key=compacted_key
         )
 
         self.state_manager.register_ingestion_object(
@@ -121,10 +145,18 @@ class CompactionEngine:
             compacted_into_key=compacted_key
         )
 
+        # Bước 5: Xử lý vòng đời tệp nguồn (mặc định archive theo D-11)
         if archive_small_files:
             for old_file in small_files:
                 archive_key = f"archive/{old_file}"
                 self.client.copy_object(self.bronze_bucket, archive_key, CopySource(self.bronze_bucket, old_file))
+                archived_stat = self.client.stat_object(self.bronze_bucket, archive_key)
+                original_stat = self.client.stat_object(self.bronze_bucket, old_file)
+                if archived_stat.size != original_stat.size:
+                    raise IOError(
+                        f"Archive copy verification failed for {old_file}: "
+                        f"kích thước sau copy không khớp. Giữ nguyên tệp nguồn để điều tra."
+                    )
                 self.client.remove_object(self.bronze_bucket, old_file)
         elif purge_small_files:
             for old_file in small_files:
@@ -137,6 +169,6 @@ class CompactionEngine:
             "total_records": total_records,
             "old_total_bytes": old_total_bytes,
             "new_compacted_bytes": write_result["compressed_size_bytes"],
-            "bytes_saved": max(0, old_total_bytes - write_result["compressed_size_bytes"]),
+            "bytes_saved": bytes_saved,
             "compacted_key": compacted_key
         }

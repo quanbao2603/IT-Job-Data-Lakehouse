@@ -1,4 +1,7 @@
 import os
+import io
+import gzip
+import json
 import unittest
 import tempfile
 import sqlite3
@@ -141,6 +144,15 @@ class TestStateManager(unittest.TestCase):
         self.assertEqual(len(active_after), 1)
         self.assertEqual(active_after[0]["object_key"], "itviec/file2.jsonl.gz")
 
+    def test_partial_unique_index_schema_exists(self):
+        """Kiểm chứng Partial Unique Index bắt buộc phải tồn tại trong sqlite_master."""
+        with self.state_mgr._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_active_running_per_source'")
+            row = cursor.fetchone()
+            self.assertIsNotNone(row, "Partial Unique Index idx_active_running_per_source không tồn tại!")
+            self.assertIn("WHERE status = 'RUNNING'", row[0])
+
     def test_concurrency_exclusive_lock(self):
         lock1 = self.state_mgr.acquire_run_lock("topdev", run_id="run_topdev_01")
         self.assertIsNotNone(lock1)
@@ -178,6 +190,43 @@ class TestStateManager(unittest.TestCase):
             cursor.execute("SELECT COUNT(*) FROM ingestion_runs WHERE source_name = 'topcv' AND status = 'RUNNING'")
             running_count = cursor.fetchone()[0]
             self.assertEqual(running_count, 1)
+
+    def test_stress_concurrency_race(self):
+        """Stress-test 10 vòng đua liên tục: Trong mọi vòng, đúng 1 winner và đúng 1 dòng RUNNING."""
+        ctx = mp.get_context("spawn" if os.name == "nt" else "fork")
+        for iteration in range(10):
+            with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
+                iter_db_path = tmp_db.name
+            try:
+                # Khởi tạo schema & index
+                _ = StateManager(db_path=iter_db_path)
+                q = ctx.Queue()
+                barrier = ctx.Barrier(2)
+
+                p1 = ctx.Process(target=_multiprocess_lock_worker, args=(iter_db_path, "topdev", f"iter_{iteration}_p1", q, barrier))
+                p2 = ctx.Process(target=_multiprocess_lock_worker, args=(iter_db_path, "topdev", f"iter_{iteration}_p2", q, barrier))
+                p1.start()
+                p2.start()
+                p1.join(timeout=5)
+                p2.join(timeout=5)
+
+                results = [q.get(timeout=2), q.get(timeout=2)]
+                winners = [r for r in results if r is not None]
+                losers = [r for r in results if r is None]
+
+                self.assertEqual(len(winners), 1, f"[Vòng {iteration}] Phải có đúng 1 winner.")
+                self.assertEqual(len(losers), 1, f"[Vòng {iteration}] Phải có đúng 1 loser.")
+
+                conn = sqlite3.connect(iter_db_path)
+                running = conn.execute("SELECT COUNT(*) FROM ingestion_runs WHERE source_name = 'topdev' AND status = 'RUNNING'").fetchone()[0]
+                conn.close()
+                self.assertEqual(running, 1, f"[Vòng {iteration}] Chỉ có đúng 1 dòng RUNNING.")
+            finally:
+                if os.path.exists(iter_db_path):
+                    try:
+                        os.remove(iter_db_path)
+                    except Exception:
+                        pass
 
     def test_heartbeat_lifecycle(self):
         lock = self.state_mgr.acquire_run_lock("itviec", run_id="run_hb_01")
@@ -376,6 +425,201 @@ class TestCrawlerGeneratorStreaming(unittest.TestCase):
         res = crawler.run(mode="incremental")
         self.assertEqual(res["status"], "SUCCESS")
         self.assertGreaterEqual(crawler.state_manager.heartbeat.call_count, 3)
+
+    def test_fetch_phase_heartbeat_progress(self):
+        """Khẳng định heartbeat được gọi tại các chốt tiến độ của pha fetch."""
+        class ConsumingFetchWriter:
+            def write_atomic(self, source, records, run_id=None, target_bronze_key=None):
+                rows = list(records)
+                return {
+                    "status": "COMMITTED",
+                    "source": source,
+                    "bronze_s3_uri": f"s3://bronze/{source}/test.jsonl.gz",
+                    "bronze_key": f"{source}/test.jsonl.gz",
+                    "records_count": len(rows),
+                    "compressed_size_bytes": 100,
+                    "compression_ratio_pct": 50.0,
+                    "file_checksum_sha256": "mock_sha"
+                }
+
+        class FetchHeartbeatCrawler(BaseCrawler):
+            def __init__(self, db_path):
+                self.source_name = "itviec"
+                self.state_manager = StateManager(db_path=db_path)
+                self.writer = ConsumingFetchWriter()
+
+            def fetch_jobs(self, **kwargs) -> Iterator[Dict[str, Any]]:
+                # Mô phỏng duyệt qua 2 search pages và detail items
+                for page in range(1, 3):
+                    self.heartbeat()  # fetch-phase heartbeat per page
+                    for j in range(2):
+                        self.heartbeat()  # fetch-phase heartbeat per detail
+                        yield {"job_id": f"job_p{page}_{j}", "posted_date_iso": "2026-11-06T10:00:00Z"}
+
+        crawler = FetchHeartbeatCrawler(self.temp_db_path)
+        crawler.state_manager.heartbeat = MagicMock(wraps=crawler.state_manager.heartbeat)
+        res = crawler.run(mode="incremental")
+        self.assertEqual(res["status"], "SUCCESS")
+        # 2 page + 4 detail + 1 sau lock + 2 write-phase = 9 heartbeat; yêu cầu tối thiểu 4
+        self.assertGreaterEqual(crawler.state_manager.heartbeat.call_count, 4)
+
+
+class _FakeS3Response:
+    """Giả lập response get_object của MinIO cho luồng đọc gzip."""
+
+    def __init__(self, data: bytes):
+        self._buf = io.BytesIO(data)
+
+    def read(self, amt=-1):
+        return self._buf.read(amt)
+
+    def close(self):
+        pass
+
+    def release_conn(self):
+        pass
+
+
+def _gz_bytes(records):
+    buf = io.BytesIO()
+    with gzip.open(buf, "wt", encoding="utf-8") as gz:
+        for rec in records:
+            gz.write(json.dumps(rec) + "\n")
+    return buf.getvalue()
+
+
+class TestCompactionEngine(unittest.TestCase):
+    PARTITION = "itviec/ingest_year=2026/ingest_month=11/ingest_day=05"
+
+    def setUp(self):
+        self.temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.temp_db_path = self.temp_db.name
+        self.temp_db.close()
+
+        with patch("src.storage.compaction_engine.load_env_file"), \
+             patch("src.storage.atomic_writer.load_env_file"), \
+             patch("src.storage.compaction_engine.Minio", return_value=MagicMock()), \
+             patch("src.storage.atomic_writer.Minio", return_value=MagicMock()):
+            self.engine = CompactionEngine(access_key="mock_key", secret_key="mock_secret")
+        self.engine.state_manager = StateManager(db_path=self.temp_db_path)
+
+        self.file_a = f"{self.PARTITION}/part_itviec_incremental_20261105_100000_aaaa.jsonl.gz"
+        self.file_b = f"{self.PARTITION}/part_itviec_incremental_20261105_120000_bbbb.jsonl.gz"
+        self.file_compacted_old = f"{self.PARTITION}/part_compacted_20261105_090000_cccc.jsonl.gz"
+
+        self.records_a = [{"job_id": f"a{i}", "_metadata": {"source": "itviec"}} for i in range(2)]
+        self.records_b = [{"job_id": f"b{i}", "_metadata": {"source": "itviec"}} for i in range(3)]
+
+        # Hai tệp nguồn phải có manifest hợp lệ trước khi được phép gom
+        self.engine.state_manager.register_ingestion_object(self.file_a, "run_a", "itviec", 100, 2, "sha_a")
+        self.engine.state_manager.register_ingestion_object(self.file_b, "run_b", "itviec", 100, 3, "sha_b")
+
+        mock_client = MagicMock()
+        def _list_objects(bucket, prefix=None, recursive=False):
+            if bucket != "bronze":
+                return iter([])
+            objs = []
+            for key, size in [(self.file_a, 100), (self.file_b, 100), (self.file_compacted_old, 500)]:
+                if prefix is None or key.startswith(prefix):
+                    obj = MagicMock()
+                    obj.object_name = key
+                    obj.size = size
+                    objs.append(obj)
+            return iter(objs)
+        mock_client.list_objects.side_effect = _list_objects
+        mock_client.stat_object.return_value = MagicMock(size=100)
+        self.mock_client = mock_client
+        self.engine.client = mock_client
+        self.engine.writer.client = mock_client
+
+    def tearDown(self):
+        if os.path.exists(self.temp_db_path):
+            try:
+                os.remove(self.temp_db_path)
+            except OSError:
+                pass
+
+    def _wire_get_object(self, verified_records=None):
+        """get_object trả nội dung nguồn cho 2 tệp nhỏ; trả verified_records cho tệp compaction."""
+        sources = {self.file_a: self.records_a, self.file_b: self.records_b}
+        def _get_object(bucket, key):
+            if key in sources:
+                return _FakeS3Response(_gz_bytes(sources[key]))
+            payload = verified_records if verified_records is not None else self.records_a + self.records_b
+            return _FakeS3Response(_gz_bytes(payload))
+        self.mock_client.get_object.side_effect = _get_object
+
+    def test_stream_bronze_records_reads_jsonl_gz(self):
+        self._wire_get_object()
+        records = list(self.engine.writer.stream_bronze_records(self.file_a))
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0]["job_id"], "a0")
+
+    def test_compaction_skips_below_threshold(self):
+        self._wire_get_object()
+        res = self.engine.compact_partition(self.PARTITION, min_files_threshold=3)
+        self.assertEqual(res["status"], "SKIPPED")
+        self.assertEqual(res["files_count"], 2)
+
+    def test_compaction_happy_path_archive_mode(self):
+        self._wire_get_object()
+        with patch("os.path.getsize", return_value=100):
+            res = self.engine.compact_partition(self.PARTITION, min_files_threshold=2)
+
+        self.assertEqual(res["status"], "COMPACTED")
+        # Lọc đúng: chỉ 2 tệp nguồn, bỏ qua tệp part_compacted_ cũ
+        self.assertEqual(res["files_merged_count"], 2)
+        self.assertEqual(res["total_records"], 5)
+        self.assertEqual(res["bytes_saved"], 100)
+        # Tệp hợp nhất nằm ĐÚNG partition nguồn, không phải partition ngày hiện tại
+        self.assertTrue(res["compacted_key"].startswith(self.PARTITION))
+        self.assertIn("part_compacted_", res["compacted_key"])
+
+        # Audit log có bytes_saved (bug TypeError cũ phải biến mất)
+        with self.engine.state_manager._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT bytes_saved, total_records, files_merged_count FROM compaction_audit_logs")
+            row = cur.fetchone()
+            self.assertEqual(row["bytes_saved"], 100)
+            self.assertEqual(row["total_records"], 5)
+
+        # Manifest: tệp mới active, 2 tệp nguồn marked compacted
+        active = self.engine.state_manager.list_active_bronze_objects("itviec")
+        self.assertEqual([o["object_key"] for o in active], [res["compacted_key"]])
+        with self.engine.state_manager._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) AS c FROM ingestion_objects WHERE is_compacted = 1")
+            self.assertEqual(cur.fetchone()["c"], 2)
+
+        # Lifecycle archive: copy từng tệp nguồn sang archive/ rồi mới remove
+        archive_copies = [c.args[1] for c in self.mock_client.copy_object.call_args_list
+                          if c.args[1].startswith("archive/")]
+        self.assertEqual(sorted(archive_copies), sorted([f"archive/{self.file_a}", f"archive/{self.file_b}"]))
+        removed = [c.args[1] for c in self.mock_client.remove_object.call_args_list]
+        self.assertIn(self.file_a, removed)
+        self.assertIn(self.file_b, removed)
+        self.assertNotIn(res["compacted_key"], removed)
+
+    def test_compaction_record_count_mismatch_fail_closed(self):
+        # Tệp sau gom đọc lại chỉ có 3/5 bản ghi → phải xóa tệp gom và không ghi manifest
+        self._wire_get_object(verified_records=self.records_a)
+        with patch("os.path.getsize", return_value=100):
+            with self.assertRaises(IOError):
+                self.engine.compact_partition(self.PARTITION, min_files_threshold=2)
+
+        with self.engine.state_manager._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) AS c FROM compaction_audit_logs")
+            self.assertEqual(cur.fetchone()["c"], 0)
+            cur.execute("SELECT COUNT(*) AS c FROM ingestion_objects")
+            self.assertEqual(cur.fetchone()["c"], 2)  # chỉ còn đúng 2 dòng manifest của tệp nguồn
+            cur.execute("SELECT COUNT(*) AS c FROM ingestion_objects WHERE is_compacted = 1")
+            self.assertEqual(cur.fetchone()["c"], 0)
+        removed = [c.args[1] for c in self.mock_client.remove_object.call_args_list]
+        self.assertTrue(any("part_compacted_" in k for k in removed))
+        # Tệp nguồn KHÔNG bị xóa khi đối soát fail
+        self.assertNotIn(self.file_a, removed)
+        self.assertNotIn(self.file_b, removed)
 
 
 if __name__ == "__main__":

@@ -109,11 +109,30 @@ class AtomicWriter:
             pass
         return cleaned_count
 
+    def stream_bronze_records(self, object_key: str) -> Generator[Dict[str, Any], None, None]:
+        """
+        Stream từng bản ghi JSON từ một tệp .jsonl.gz trong bucket Bronze.
+        Bộ nhớ đệm cố định: giải nén luồng trực tiếp, không nạp toàn bộ tệp vào RAM.
+        Dùng cho CompactionEngine (stream merge) và đối soát record count sau commit.
+        """
+        resp = self.client.get_object(self.bronze_bucket, object_key)
+        try:
+            with gzip.GzipFile(fileobj=resp, mode="rb") as gz:
+                with io.TextIOWrapper(gz, encoding="utf-8") as text_stream:
+                    for line in text_stream:
+                        line_clean = line.strip()
+                        if line_clean:
+                            yield json.loads(line_clean)
+        finally:
+            resp.close()
+            resp.release_conn()
+
     def write_atomic(
         self,
         source: str,
         records: Iterable[Dict[str, Any]],
-        run_id: Optional[str] = None
+        run_id: Optional[str] = None,
+        target_bronze_key: Optional[str] = None
     ) -> Dict[str, Any]:
         self.clean_stale_landing_uploads()
 
@@ -126,7 +145,9 @@ class AtomicWriter:
         day = dt.strftime("%d")
 
         temp_landing_key = f"{source_clean}/temp_{active_run_id}.uploading"
-        bronze_key = f"{source_clean}/ingest_year={year}/ingest_month={month}/ingest_day={day}/part_{active_run_id}.jsonl.gz"
+        # Compaction ghi đè vị trí đích để tệp hợp nhất nằm đúng partition nguồn
+        # (theo thiết kế Notion Giai đoạn 5), thay vì partition ngày hiện tại.
+        bronze_key = target_bronze_key or f"{source_clean}/ingest_year={year}/ingest_month={month}/ingest_day={day}/part_{active_run_id}.jsonl.gz"
 
         with tempfile.NamedTemporaryFile(suffix=".jsonl.gz", delete=False) as tmp_file:
             temp_path = tmp_file.name
