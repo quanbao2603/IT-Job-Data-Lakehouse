@@ -138,7 +138,7 @@ class DevworkCrawler(BaseCrawler):
         if not nuxt_script:
             return None
 
-        js_code = f"var window = {{}};\n{nuxt_script}\nprocess.stdout.write(JSON.stringify(window.__NUXT__));"
+        js_code = f"var window = {{}};\n{nuxt_script}\nprocess.stdout.write(JSON.stringify(window.__NUXT__), () => process.exit(0));"
         tmp = os.path.join(tempfile.gettempdir(), "eval_devwork_nuxt.js")
         try:
             with open(tmp, "w", encoding="utf-8") as f:
