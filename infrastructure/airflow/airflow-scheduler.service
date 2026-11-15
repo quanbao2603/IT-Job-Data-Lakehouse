@@ -1,0 +1,15 @@
+[Unit]
+Description=Apache Airflow scheduler for IT Job Lakehouse
+After=postgresql.service
+
+[Service]
+User=womcloud
+EnvironmentFile=/home/womcloud/airflow/airflow.env
+Environment=AIRFLOW_HOME=/home/womcloud/airflow
+WorkingDirectory=/home/womcloud/IT-Job-Data-Lakehouse
+ExecStart=/home/womcloud/airflow_env/bin/airflow scheduler
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

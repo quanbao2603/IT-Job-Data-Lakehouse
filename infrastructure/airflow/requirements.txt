@@ -1,0 +1,9 @@
+# Airflow runs in its own virtualenv; this file contains project runtime dependencies
+# needed by the nine crawler modules.
+beautifulsoup4>=4.12.3
+curl_cffi>=0.7.0
+minio>=7.2.5
+python-dotenv>=1.0.1
+requests>=2.31.0
+psycopg2-binary>=2.9.9
+selenium>=4.20.0
