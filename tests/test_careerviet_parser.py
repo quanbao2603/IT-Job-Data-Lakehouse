@@ -228,11 +228,12 @@ class TestCareerVietFetchJobsIncremental(CrossClassCrawlerMixin, unittest.TestCa
         self.assertTrue(all(j["description"] == "" for j in jobs))
         self.assertTrue(all(j["job_title"] for j in jobs))
 
-    def test_stops_when_page_has_no_cards(self):
+    def test_listing_without_source_total_fails_closed(self):
+        from src.crawlers.base_crawler import CrawlerSourceError
         with patch.object(self.crawler, "_make_request", return_value="<html></html>"), \
              patch("src.crawlers.careerviet_crawler.time.sleep", return_value=None):
-            ids = self._record_ids(mode="full", max_pages=5)
-        self.assertEqual(ids, [])
+            with self.assertRaises(CrawlerSourceError):
+                list(self.crawler.fetch_jobs(mode="full", max_pages=5))
 
 
 if __name__ == "__main__":

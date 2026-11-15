@@ -19,7 +19,12 @@ except ImportError:
     import requests
     HAVE_CURL_CFFI = False
 
-from src.crawlers.base_crawler import BaseCrawler
+from src.crawlers.base_crawler import (
+    BaseCrawler,
+    CrawlerSourceError,
+    emit_cli_result,
+    require_listing_data,
+)
 
 
 class ITViecCrawler(BaseCrawler):
@@ -86,6 +91,9 @@ class ITViecCrawler(BaseCrawler):
                     time.sleep(sleep_time)
                     continue
 
+                if resp.status_code == 403:
+                    raise CrawlerSourceError(f"{self.source_name} request returned HTTP 403")
+
                 if resp.status_code in [404, 410]:
                     print(f"      [-] Tin không tồn tại hoặc đã đóng (HTTP {resp.status_code})")
                     return None
@@ -98,12 +106,17 @@ class ITViecCrawler(BaseCrawler):
                 time.sleep(1.5 + attempt)
 
             except Exception as e:
+                if isinstance(e, CrawlerSourceError):
+                    raise
                 if attempt < max_retries - 1:
                     time.sleep(1.5 + attempt)
                 else:
-                    print(f"      [!] Lỗi kết nối {url}: {e}")
-                    return None
-        return None
+                    raise CrawlerSourceError(
+                        f"{self.source_name} request failed after {attempt + 1} attempts: {type(e).__name__}"
+                    ) from e
+        raise CrawlerSourceError(
+            f"{self.source_name} request failed after {max_retries} attempts"
+        )
 
     def _extract_job_id(self, url: str) -> str:
         m = re.search(r'-(\d+)(?:\?.*)?$', url)
@@ -260,6 +273,7 @@ class ITViecCrawler(BaseCrawler):
         candidates_urls = []
         is_incremental = (mode == "incremental")
         watermark_hit = False
+        reported_total = None
 
         print(f"[*] Bắt đầu quét ITViec - Chế độ: {mode_label} (Tối đa {max_pages} trang)...")
         for page in range(1, max_pages + 1):
@@ -270,8 +284,9 @@ class ITViecCrawler(BaseCrawler):
             print(f"   -> Đang tải trang tìm kiếm {page}/{max_pages}: {url}")
             html = self._make_request(url)
             if not html:
-                print(f"      [!] Không tải được trang {page}, kết thúc quét.")
-                break
+                raise CrawlerSourceError(
+                    f"{self.source_name} listing page {page} returned no response"
+                )
 
             soup = BeautifulSoup(html, 'html.parser')
 
@@ -281,6 +296,7 @@ class ITViecCrawler(BaseCrawler):
                     cnt_m = re.search(r'([\d\.\,]+)\s+IT jobs', h1_elem.get_text())
                     if cnt_m:
                         total_jobs = cnt_m.group(1)
+                        reported_total = int(total_jobs.replace('.', '').replace(',', ''))
                         print(f"      📊 ITVIEC XÁC NHẬN: Tuyển dụng {total_jobs} việc làm IT tại Việt Nam")
 
             job_links = soup.find_all('a', href=re.compile(r'/it-jobs/[a-zA-Z0-9\-]+-\d+'))
@@ -294,6 +310,7 @@ class ITViecCrawler(BaseCrawler):
                     if is_incremental and last_record_id and str(jid) == str(last_record_id):
                         print(f"      🎯 [WATERMARK HIT] Chạm ranh giới tin cũ ITViec (Job ID: {jid}). Dừng quét!")
                         watermark_hit = True
+                        self._empty_result_confirmed = True
                         break
 
                     if full_u not in candidates_urls and full_u not in page_urls:
@@ -303,8 +320,19 @@ class ITViecCrawler(BaseCrawler):
             self.heartbeat()
 
             if not page_urls and not watermark_hit:
+                if page == 1:
+                    require_listing_data(
+                        getattr(self, "source_name", "itviec"),
+                        0,
+                        reported_total=reported_total,
+                        total_known=reported_total is not None,
+                    )
+                self._empty_result_confirmed = True
                 print(f"      [!] Đã hết tin phân trang tại trang {page}. Dừng quét.")
                 break
+
+            if watermark_hit:
+                self._empty_result_confirmed = True
 
             candidates_urls.extend(page_urls)
 
@@ -339,4 +367,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     crawler = ITViecCrawler()
-    crawler.run(mode=args.mode, max_pages=args.max_pages)
+    result = crawler.run(mode=args.mode, max_pages=args.max_pages)
+    raise SystemExit(emit_cli_result(result))

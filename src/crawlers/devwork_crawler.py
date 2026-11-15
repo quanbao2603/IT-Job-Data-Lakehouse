@@ -20,7 +20,12 @@ except ImportError:
     import requests
     HAVE_CURL_CFFI = False
 
-from src.crawlers.base_crawler import BaseCrawler
+from src.crawlers.base_crawler import (
+    BaseCrawler,
+    CrawlerSourceError,
+    emit_cli_result,
+    require_listing_data,
+)
 
 
 class DevworkCrawler(BaseCrawler):
@@ -100,6 +105,9 @@ class DevworkCrawler(BaseCrawler):
                     time.sleep(sleep_time)
                     continue
 
+                if resp.status_code == 403:
+                    raise CrawlerSourceError(f"{self.source_name} request returned HTTP 403")
+
                 if resp.status_code in [404, 410]:
                     print(f"      [-] Tin không tồn tại hoặc đã đóng (HTTP {resp.status_code})")
                     return None
@@ -112,12 +120,17 @@ class DevworkCrawler(BaseCrawler):
                 time.sleep(1.5 + attempt)
 
             except Exception as e:
+                if isinstance(e, CrawlerSourceError):
+                    raise
                 if attempt < max_retries - 1:
                     time.sleep(1.5 + attempt)
                 else:
-                    print(f"      [!] Lỗi kết nối {url}: {e}")
-                    return None
-        return None
+                    raise CrawlerSourceError(
+                        f"{self.source_name} request failed after {attempt + 1} attempts: {type(e).__name__}"
+                    ) from e
+        raise CrawlerSourceError(
+            f"{self.source_name} request failed after {max_retries} attempts"
+        )
 
     def _list_url(self, page: int) -> str:
         if page <= 1:
@@ -434,8 +447,9 @@ class DevworkCrawler(BaseCrawler):
             print(f"   -> Đang tải trang tìm kiếm {page}/{max_pages}: {url}")
             html = self._make_request(url)
             if not html:
-                print(f"      [!] Không tải được trang {page}, kết thúc quét.")
-                break
+                raise CrawlerSourceError(
+                    f"{self.source_name} listing page {page} returned no response"
+                )
 
             parsed = self._parse_listing_page(html)
             raw_items = parsed["items"]
@@ -447,7 +461,15 @@ class DevworkCrawler(BaseCrawler):
 
             cards = [self._normalize_job_card(it) for it in raw_items if it.get("id")]
             print(f"      [✓] Trang {page} phát hiện {len(cards)} tin.")
+            if page == 1:
+                require_listing_data(
+                    getattr(self, "source_name", "devwork"),
+                    len(cards),
+                    reported_total=parsed["total_items"],
+                    total_known=True,
+                )
             if not cards:
+                self._empty_result_confirmed = True
                 print(f"      [!] Đã hết tin phân trang tại trang {page}. Dừng quét.")
                 break
 
@@ -456,10 +478,12 @@ class DevworkCrawler(BaseCrawler):
                     if last_record_id and str(card["job_id"]) == str(last_record_id):
                         print(f"      🎯 [WATERMARK HIT] Chạm ranh giới tin cũ (Job ID: {card['job_id']}). Dừng quét!")
                         watermark_hit = True
+                        self._empty_result_confirmed = True
                         break
                     if watermark_date and card["posted_iso"] and card["posted_iso"] < watermark_date:
                         print(f"      🎯 [WATERMARK HIT] Tin đăng {card['posted_iso']} cũ hơn mốc {watermark_date}. Dừng quét!")
                         watermark_hit = True
+                        self._empty_result_confirmed = True
                         break
 
                 self.heartbeat()
@@ -519,4 +543,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     crawler = DevworkCrawler()
-    crawler.run(mode=args.mode, max_pages=args.max_pages)
+    result = crawler.run(mode=args.mode, max_pages=args.max_pages)
+    raise SystemExit(emit_cli_result(result))

@@ -1,4 +1,6 @@
 import abc
+import json
+import os
 import uuid
 import inspect
 from datetime import datetime
@@ -7,6 +9,33 @@ from typing import Dict, Any, Optional, Iterable
 from src.storage.state_manager import StateManager
 from src.storage.atomic_writer import AtomicWriter
 from src.storage.metadata_envelope import MetadataEnvelope
+from src.utils.operational import append_failure_event, classify_failure
+
+
+class CrawlerSourceError(RuntimeError):
+    """A source request or parser failure that must fail the ingestion run."""
+
+
+def require_listing_data(
+    source: str,
+    item_count: int,
+    *,
+    reported_total: Optional[int] = None,
+    total_known: bool = False,
+) -> None:
+    """Reject parser-empty listings unless the source explicitly confirms zero."""
+    if item_count > 0:
+        return
+    if total_known and reported_total == 0:
+        return
+    detail = (
+        f"source total is {reported_total}"
+        if total_known
+        else "source total is unavailable"
+    )
+    raise CrawlerSourceError(
+        f"{source} parser returned no listing data while {detail}"
+    )
 
 
 class BaseCrawler(abc.ABC):
@@ -23,6 +52,7 @@ class BaseCrawler(abc.ABC):
         self.state_manager = StateManager()
         self.writer = AtomicWriter()
         self._current_run_id: Optional[str] = None
+        self._empty_result_confirmed = False
 
     def heartbeat(self) -> bool:
         """Refresh the active run lease during fetch or write progress."""
@@ -72,6 +102,7 @@ class BaseCrawler(abc.ABC):
             print("[*] Chế độ FULL: Bỏ qua Watermark, cào toàn diện.")
 
         try:
+            self._empty_result_confirmed = False
             fetch_kwargs = {"mode": mode, "max_pages": max_pages, "watermark_ts": watermark_ts}
             sig = inspect.signature(self.fetch_jobs)
             if "last_record_id" in sig.parameters:
@@ -83,6 +114,10 @@ class BaseCrawler(abc.ABC):
             first_job = next(jobs_iter, None)
 
             if first_job is None:
+                if not getattr(self, "_empty_result_confirmed", False):
+                    raise CrawlerSourceError(
+                        f"{self.source_name} returned no records without explicit source confirmation"
+                    )
                 now_utc = datetime.utcnow().isoformat() + "Z"
                 self.state_manager.commit_success(
                     source_name=self.source_name,
@@ -164,7 +199,28 @@ class BaseCrawler(abc.ABC):
 
         except Exception as e:
             self.state_manager.mark_failure(self.source_name, run_id=run_id, error_message=str(e))
+            append_failure_event(
+                os.getenv("LAKEHOUSE_FAILURE_LEDGER", "data/operational/source_failures.jsonl"),
+                dag_id=os.getenv("AIRFLOW_CTX_DAG_ID", "standalone_crawler"),
+                run_id=run_id,
+                task_id=os.getenv("AIRFLOW_CTX_TASK_ID", f"crawl_{self.source_name}"),
+                source=self.source_name,
+                failure_class=classify_failure(e),
+                attempt=int(os.getenv("AIRFLOW_CTX_TRY_NUMBER", "1")),
+                message=str(e),
+            )
             print(f"\n❌ LỖI TRONG QUÁ TRÌNH CÀO [{self.source_name.upper()}]: {e}")
             raise
         finally:
             self._current_run_id = None
+
+
+def exit_code_for_result(result: Dict[str, Any]) -> int:
+    """Return the CLI contract: only a committed SUCCESS may exit zero."""
+    return 0 if result.get("status") == "SUCCESS" else 1
+
+
+def emit_cli_result(result: Dict[str, Any]) -> int:
+    """Print one machine-readable final line and return the process exit code."""
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return exit_code_for_result(result)

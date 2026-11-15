@@ -271,15 +271,15 @@ class TestVietnamDevsFetchJobsIncremental(CrossClassCrawlerMixin, unittest.TestC
             self.assertEqual(r["description"], "")
             self.assertEqual(r["platform"], "vietnamdevs")
 
-    def test_empty_page_yields_nothing(self):
+    def test_listing_without_source_total_fails_closed(self):
+        from src.crawlers.base_crawler import CrawlerSourceError
         def mock_request(url, **kwargs):
-            return self.empty_html
+            return "<html><body>listing unavailable</body></html>"
 
         with patch.object(self.crawler, "_make_request", side_effect=mock_request), \
              patch("src.crawlers.vietnamdevs_crawler.time.sleep"):
-            results = list(self.crawler.fetch_jobs(mode="full", max_pages=1))
-
-        self.assertEqual(len(results), 0)
+            with self.assertRaises(CrawlerSourceError):
+                list(self.crawler.fetch_jobs(mode="full", max_pages=1))
 
 
 if __name__ == "__main__":

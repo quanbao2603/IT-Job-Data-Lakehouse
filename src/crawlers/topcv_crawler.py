@@ -17,7 +17,12 @@ except ImportError:
     import requests
     HAVE_CURL_CFFI = False
 
-from src.crawlers.base_crawler import BaseCrawler
+from src.crawlers.base_crawler import (
+    BaseCrawler,
+    CrawlerSourceError,
+    emit_cli_result,
+    require_listing_data,
+)
 
 
 class TopCVCrawler(BaseCrawler):
@@ -84,6 +89,9 @@ class TopCVCrawler(BaseCrawler):
                     time.sleep(sleep_time)
                     continue
 
+                if resp.status_code == 403:
+                    raise CrawlerSourceError(f"{self.source_name} request returned HTTP 403")
+
                 if resp.status_code in [404, 410]:
                     print(f"      [-] Tin không tồn tại hoặc đã đóng (HTTP {resp.status_code})")
                     return None
@@ -96,12 +104,17 @@ class TopCVCrawler(BaseCrawler):
                 time.sleep(1.5 + attempt)
 
             except Exception as e:
+                if isinstance(e, CrawlerSourceError):
+                    raise
                 if attempt < max_retries - 1:
                     time.sleep(1.5 + attempt)
                 else:
-                    print(f"      [!] Lỗi kết nối {url}: {e}")
-                    return None
-        return None
+                    raise CrawlerSourceError(
+                        f"{self.source_name} request failed after {attempt + 1} attempts: {type(e).__name__}"
+                    ) from e
+        raise CrawlerSourceError(
+            f"{self.source_name} request failed after {max_retries} attempts"
+        )
 
     def _extract_job_id(self, url: str) -> str:
         m = re.search(r'/([^/]+)\.html', url)
@@ -249,6 +262,7 @@ class TopCVCrawler(BaseCrawler):
         candidates_urls = []
         seen = set()
         watermark_hit = False
+        reported_total = None
 
         for page in range(1, max_pages + 1):
             if watermark_hit:
@@ -258,14 +272,17 @@ class TopCVCrawler(BaseCrawler):
             print(f"   -> Đang tải trang tìm kiếm {page}/{max_pages}: {url}")
             html = self._make_request(url)
             if not html:
-                print(f"      [!] Không tải được trang {page}, kết thúc quét.")
-                break
+                raise CrawlerSourceError(
+                    f"{self.source_name} listing page {page} returned no response"
+                )
 
             soup = BeautifulSoup(html, 'html.parser')
 
             if page == 1:
                 header_count = soup.find(string=re.compile(r'Tuyển dụng\s+([\d\.\,]+)\s+việc làm', re.I))
                 if header_count:
+                    count_match = re.search(r'([\d\.\,]+)', header_count)
+                    reported_total = int(count_match.group(1).replace('.', '').replace(',', '')) if count_match else None
                     print(f"      📊 TOPCV XÁC NHẬN: {header_count.strip()}")
 
             job_links = []
@@ -278,6 +295,7 @@ class TopCVCrawler(BaseCrawler):
                     if mode == "incremental" and last_record_id and str(jid) == str(last_record_id):
                         print(f"      🎯 [WATERMARK HIT] Chạm ranh giới tin cũ đã cào (Job ID: {jid}). Dừng quét!")
                         watermark_hit = True
+                        self._empty_result_confirmed = True
                         break
 
                     job_links.append(href)
@@ -286,8 +304,19 @@ class TopCVCrawler(BaseCrawler):
             self.heartbeat()
 
             if not job_links and not watermark_hit:
+                if page == 1:
+                    require_listing_data(
+                        getattr(self, "source_name", "topcv"),
+                        0,
+                        reported_total=reported_total,
+                        total_known=reported_total is not None,
+                    )
+                self._empty_result_confirmed = True
                 print(f"      [!] Đã hết tin phân trang tại trang {page}. Dừng quét.")
                 break
+
+            if watermark_hit:
+                self._empty_result_confirmed = True
 
             candidates_urls.extend(job_links)
 
@@ -321,4 +350,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     crawler = TopCVCrawler()
-    crawler.run(mode=args.mode, max_pages=args.max_pages)
+    result = crawler.run(mode=args.mode, max_pages=args.max_pages)
+    raise SystemExit(emit_cli_result(result))

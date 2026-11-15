@@ -7,7 +7,7 @@ User=womcloud
 EnvironmentFile=/home/womcloud/airflow/airflow.env
 Environment=AIRFLOW_HOME=/home/womcloud/airflow
 WorkingDirectory=/home/womcloud/IT-Job-Data-Lakehouse
-ExecStart=/home/womcloud/airflow_env/bin/airflow webserver --port 8080
+ExecStart=/home/womcloud/airflow_env/bin/airflow webserver --host 127.0.0.1 --port 8080
 Restart=always
 RestartSec=10
 

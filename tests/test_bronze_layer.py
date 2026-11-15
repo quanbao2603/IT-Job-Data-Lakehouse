@@ -299,8 +299,10 @@ class TestCrawlerGeneratorStreaming(unittest.TestCase):
                 self.source_name = "test_empty"
                 self.state_manager = StateManager(db_path=db_path)
                 self.writer = MagicMock()
+                self._empty_result_confirmed = True
 
             def fetch_jobs(self, **kwargs) -> Iterator[Dict[str, Any]]:
+                self._empty_result_confirmed = True
                 return iter([])
 
         crawler = EmptyCrawler(self.temp_db_path)

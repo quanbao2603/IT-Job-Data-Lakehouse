@@ -18,7 +18,12 @@ except ImportError:
     import requests
     HAVE_CURL_CFFI = False
 
-from src.crawlers.base_crawler import BaseCrawler
+from src.crawlers.base_crawler import (
+    BaseCrawler,
+    CrawlerSourceError,
+    emit_cli_result,
+    require_listing_data,
+)
 
 
 class TopDevCrawler(BaseCrawler):
@@ -87,20 +92,29 @@ class TopDevCrawler(BaseCrawler):
                     time.sleep(sleep_time)
                     continue
 
+                if resp.status_code == 403:
+                    raise CrawlerSourceError(f"{self.source_name} request returned HTTP 403")
+
                 if resp.status_code in [500, 502, 503, 504]:
                     time.sleep(2.0 + attempt)
                     continue
 
-                print(f"      [-] HTTP {resp.status_code} khi tải {url}")
-                return None
+                raise CrawlerSourceError(
+                    f"{self.source_name} request returned HTTP {resp.status_code}"
+                )
 
             except Exception as e:
+                if isinstance(e, CrawlerSourceError):
+                    raise
                 if attempt < max_retries - 1:
                     time.sleep(2.0 + attempt)
                 else:
-                    print(f"      [!] Lỗi kết nối {url}: {e}")
-                    return None
-        return None
+                    raise CrawlerSourceError(
+                        f"{self.source_name} request failed after {attempt + 1} attempts: {type(e).__name__}"
+                    ) from e
+        raise CrawlerSourceError(
+            f"{self.source_name} request failed after {max_retries} attempts"
+        )
 
     def _clean_html(self, raw_html: str) -> str:
         if not raw_html:
@@ -407,6 +421,7 @@ class TopDevCrawler(BaseCrawler):
         seen_job_ids = set()
         scraped_jobs = []
         watermark_hit = False
+        reported_total = None
 
         for page in range(1, max_pages + 1):
             if watermark_hit:
@@ -417,8 +432,9 @@ class TopDevCrawler(BaseCrawler):
 
             html_page = self._make_request(search_url)
             if not html_page:
-                print(f"      [-] Không thể tải trang tìm kiếm {page}, tạm dừng.")
-                break
+                raise CrawlerSourceError(
+                    f"{self.source_name} listing page {page} returned no response"
+                )
 
             # Đo đạc và thông báo tổng số tin ở trang đầu tiên
             if page == 1:
@@ -426,6 +442,7 @@ class TopDevCrawler(BaseCrawler):
                 if not total_match:
                     total_match = re.search(r"(\d+)\s*kết quả", html_page)
                 if total_match:
+                    reported_total = int(total_match.group(1))
                     print(f"      📊 TOPDEV XÁC NHẬN: Tuyển dụng {total_match.group(1)} việc làm ngành IT")
 
             # Engine 1: Giải mã RSC Flight Push
@@ -445,6 +462,14 @@ class TopDevCrawler(BaseCrawler):
                                 page_jobs.append(dom_item)
 
             if not page_jobs:
+                if page == 1:
+                    require_listing_data(
+                        getattr(self, "source_name", "topdev"),
+                        0,
+                        reported_total=reported_total,
+                        total_known=reported_total is not None,
+                    )
+                self._empty_result_confirmed = True
                 print(f"      [!] Trang {page} không phát hiện tin tuyển dụng nào. Đã đến trang cuối cùng của TopDev!")
                 break
 
@@ -456,6 +481,7 @@ class TopDevCrawler(BaseCrawler):
                 if mode == "incremental" and last_record_id and str(jid) == str(last_record_id):
                     print(f"      🎯 [WATERMARK HIT] Chạm ranh giới tin cũ TopDev (Job ID: {jid}). Dừng quét!")
                     watermark_hit = True
+                    self._empty_result_confirmed = True
                     break
 
                 if jid not in seen_job_ids:
@@ -487,4 +513,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     crawler = TopDevCrawler()
-    crawler.run(mode=args.mode, max_pages=args.max_pages)
+    result = crawler.run(mode=args.mode, max_pages=args.max_pages)
+    raise SystemExit(emit_cli_result(result))

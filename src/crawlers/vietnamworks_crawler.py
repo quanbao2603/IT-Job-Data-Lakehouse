@@ -19,7 +19,12 @@ except ImportError:
     import requests as cffi_requests
     HAVE_CURL_CFFI = False
 
-from src.crawlers.base_crawler import BaseCrawler
+from src.crawlers.base_crawler import (
+    BaseCrawler,
+    CrawlerSourceError,
+    emit_cli_result,
+    require_listing_data,
+)
 
 
 class VietnamWorksCrawler(BaseCrawler):
@@ -147,18 +152,26 @@ class VietnamWorksCrawler(BaseCrawler):
                     time.sleep(sleep_time)
                     continue
 
+                if resp.status_code == 403:
+                    raise CrawlerSourceError(f"{self.source_name} request returned HTTP 403")
+
                 if resp.status_code == 404:
                     return None
 
                 time.sleep(1.5 + attempt)
 
             except Exception as e:
+                if isinstance(e, CrawlerSourceError):
+                    raise
                 if attempt < max_retries - 1:
                     time.sleep(1.5 + attempt)
                 else:
-                    print(f"      [!] Lỗi kết nối {url}: {e}")
-                    return None
-        return None
+                    raise CrawlerSourceError(
+                        f"{self.source_name} request failed after {attempt + 1} attempts: {type(e).__name__}"
+                    ) from e
+        raise CrawlerSourceError(
+            f"{self.source_name} request failed after {max_retries} attempts"
+        )
 
     def _extract_job_detail_raw(self, html_content: str, job_url: str) -> Optional[Dict[str, Any]]:
         """
@@ -409,10 +422,15 @@ class VietnamWorksCrawler(BaseCrawler):
                 available_pages = meta.get("nbPages", 1)
                 print(f"      📊 VIETNAMWORKS XÁC NHẬN: Tuyển dụng {total_hits:,} việc làm ngành IT ({available_pages} trang API)")
             else:
-                available_pages = max_pages
+                raise CrawlerSourceError(
+                    f"{self.source_name} initial listing request returned HTTP {init_res.status_code}"
+                )
         except Exception as e:
-            print(f"      [!] Cảnh báo lấy metadata API: {e}")
-            available_pages = max_pages
+            if isinstance(e, CrawlerSourceError):
+                raise
+            raise CrawlerSourceError(
+                f"{self.source_name} initial listing metadata failed: {type(e).__name__}"
+            ) from e
 
         actual_max_pages = min(max_pages, available_pages) if mode == "full" else max_pages
 
@@ -434,11 +452,24 @@ class VietnamWorksCrawler(BaseCrawler):
             try:
                 res = self.api_session.post(self.SEARCH_API, json=payload, timeout=20)
                 if res.status_code != 200:
-                    print(f"[HTTP {res.status_code} - Dừng quét]")
-                    break
+                    raise CrawlerSourceError(
+                        f"{self.source_name} listing page {page + 1} returned HTTP {res.status_code}"
+                    )
 
                 jobs = res.json().get("data", [])
                 if not jobs:
+                    if page == 0:
+                        require_listing_data(
+                            getattr(self, "source_name", "vietnamworks"),
+                            0,
+                            reported_total=total_hits,
+                            total_known=True,
+                        )
+                        self._empty_result_confirmed = True
+                    else:
+                        raise CrawlerSourceError(
+                            f"{self.source_name} listing page {page + 1} returned no jobs while source total is {total_hits}"
+                        )
                     print("[Hết tin]")
                     break
 
@@ -459,10 +490,12 @@ class VietnamWorksCrawler(BaseCrawler):
                         if last_record_id and str(jid) == str(last_record_id):
                             print(f"\n      🎯 [WATERMARK HIT] Chạm ranh giới Job ID cũ ({jid}). Dừng quét API!")
                             watermark_hit = True
+                            self._empty_result_confirmed = True
                             break
                         if watermark_ts and approved_on and str(approved_on) <= str(watermark_ts):
                             print(f"\n      🎯 [WATERMARK HIT] Tin đăng {approved_on} <= Watermark {watermark_ts}. Dừng quét API!")
                             watermark_hit = True
+                            self._empty_result_confirmed = True
                             break
 
                     seen_ids.add(jid)
@@ -483,8 +516,11 @@ class VietnamWorksCrawler(BaseCrawler):
                 time.sleep(0.5)
 
             except Exception as e:
-                print(f"[Lỗi API: {e}]")
-                break
+                if isinstance(e, CrawlerSourceError):
+                    raise
+                raise CrawlerSourceError(
+                    f"{self.source_name} listing API failed: {type(e).__name__}: {e}"
+                ) from e
 
         print(f"\n[*] TỔNG CỘNG PHÁT HIỆN: {len(candidates)} tin tuyển dụng VietnamWorks IT. BẮT ĐẦU CÀO...")
         scraped_jobs = []
@@ -524,4 +560,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     crawler = VietnamWorksCrawler()
-    crawler.run(mode=args.mode, max_pages=args.max_pages)
+    result = crawler.run(mode=args.mode, max_pages=args.max_pages)
+    raise SystemExit(emit_cli_result(result))

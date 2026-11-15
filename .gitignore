@@ -12,5 +12,8 @@ active_env.txt
 # Runtime credentials/session material
 src/crawlers/cookies/
 
+# Runtime logs and local environment templates
+logs/
+
 # Local environment templates are safe to commit explicitly
 !.env.example
