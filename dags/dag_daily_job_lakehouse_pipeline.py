@@ -16,6 +16,7 @@ from airflow.operators.python import PythonOperator
 PROJECT_ROOT = os.environ.get("LAKEHOUSE_PROJECT_ROOT", "/home/womcloud/IT-Job-Data-Lakehouse")
 PYTHON = os.environ.get("LAKEHOUSE_PYTHON", f"{PROJECT_ROOT}/lakehouse_env/bin/python")
 MAX_PAGES = os.environ.get("LAKEHOUSE_INCREMENTAL_MAX_PAGES", "5")
+MAX_ACTIVE_TASKS = int(os.environ.get("LAKEHOUSE_MAX_ACTIVE_TASKS", "3"))
 
 CRAWLERS = {
     "careerviet": "src.crawlers.careerviet_crawler",
@@ -51,7 +52,8 @@ with DAG(
     schedule="0 2 * * *",
     catchup=False,
     max_active_runs=1,
-    max_active_tasks=9,
+    # Keep the VPS stable: only three crawler processes run concurrently by default.
+    max_active_tasks=MAX_ACTIVE_TASKS,
     dagrun_timeout=timedelta(hours=4),
     tags=["bronze", "incremental", "nine-platforms"],
 ) as dag:
