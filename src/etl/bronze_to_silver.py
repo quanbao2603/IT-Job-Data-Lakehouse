@@ -203,12 +203,12 @@ class BronzeToSilverPipeline:
                     )
                     batch.append(envelope)
                     if len(batch) >= self.max_records_per_batch:
-                        report = self.process(batch)
+                        report = self.process(batch, partial_run=True)
                         aggregate.update(report["metrics"])
                         last_report = report
                         batch = []
                 if batch:
-                    report = self.process(batch)
+                    report = self.process(batch, partial_run=True)
                     aggregate.update(report["metrics"])
                     last_report = report
         last_report["metrics"] = dict(aggregate)

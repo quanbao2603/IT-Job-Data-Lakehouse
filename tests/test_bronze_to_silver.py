@@ -107,6 +107,41 @@ class TestBronzeToSilverPipeline(unittest.TestCase):
             entity_files = list((Path(tmp) / "silver" / "entities").rglob("*.parquet"))
             self.assertTrue(entity_files)
             self.assertIn("year=2026/month=11/day=10", str(entity_files[0]))
+    def test_incremental_manifest_batches_do_not_close_historical_entities(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = EntityRegistry(str(Path(tmp) / "state.db"))
+            silver_root = str(Path(tmp) / "silver")
+            pending = str(Path(tmp) / "pending_review.csv")
+            first = self._envelope(job_id="old-job")
+            first["raw_payload"]["scraped_at"] = "2026-10-01T00:00:00Z"
+            first["_metadata"]["ingested_at"] = "2026-10-01T00:00:00Z"
+            first["_metadata"]["payload_checksum"] = MetadataEnvelope._compute_sha256(first["raw_payload"])
+            initial = BronzeToSilverPipeline(
+                registry=registry,
+                writer=SilverWriter(silver_root),
+                run_id="initial",
+                pending_review_path=pending,
+            )
+            initial.process([first])
+            old_entity = registry.list_entities()[0]["unified_job_id"]
+
+            incremental = BronzeToSilverPipeline(
+                registry=registry,
+                writer=SilverWriter(silver_root),
+                run_id="incremental",
+                pending_review_path=pending,
+            )
+
+            class ManifestReader:
+                def list_active_bronze_objects(self, platform):
+                    return [{"object_key": "itviec/delta.jsonl.gz"}]
+
+            incremental.process_bronze_objects(
+                ManifestReader(),
+                lambda key: iter([self._envelope(job_id="new-job")]),
+                platforms={"itviec"},
+            )
+            self.assertNotEqual(registry.get_entity(old_entity)["entity_status"], "CLOSED")
 
 
 if __name__ == "__main__":

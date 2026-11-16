@@ -24,7 +24,26 @@ PYTHON = os.environ.get("LAKEHOUSE_PYTHON", f"{PROJECT_ROOT}/lakehouse_env/bin/p
 STATE_DB = os.environ.get("LAKEHOUSE_STATE_DB_PATH", f"{PROJECT_ROOT}/data/state_store.db")
 MAX_PAGES = os.environ.get("LAKEHOUSE_INCREMENTAL_MAX_PAGES", "5")
 MAX_ACTIVE_TASKS = min(max(int(os.environ.get("LAKEHOUSE_MAX_ACTIVE_TASKS", "3")), 1), 3)
-SILVER_ENABLED = os.environ.get("LAKEHOUSE_SILVER_ENABLED", "false").lower() == "true"
+
+
+def silver_enabled_from_environment() -> bool:
+    """Read the Silver gate from process env or the Airflow service env file."""
+    value = os.environ.get("LAKEHOUSE_SILVER_ENABLED")
+    if value is None:
+        env_path = os.environ.get("LAKEHOUSE_AIRFLOW_ENV", "/home/womcloud/airflow/airflow.env")
+        try:
+            with open(env_path, encoding="utf-8") as handle:
+                for line in handle:
+                    key, separator, raw_value = line.partition("=")
+                    if separator and key.strip() == "LAKEHOUSE_SILVER_ENABLED":
+                        value = raw_value.strip().strip("\"'")
+                        break
+        except OSError:
+            value = None
+    return str(value or "false").lower() == "true"
+
+
+SILVER_ENABLED = silver_enabled_from_environment()
 FAILURE_LEDGER = os.environ.get(
     "LAKEHOUSE_FAILURE_LEDGER",
     f"{PROJECT_ROOT}/data/operational/source_failures.jsonl",

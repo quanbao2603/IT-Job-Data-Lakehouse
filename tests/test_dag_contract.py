@@ -12,6 +12,19 @@ AIRFLOW_TEST_ENV = all(
 
 
 class TestDagContract(unittest.TestCase):
+    def test_silver_flag_reads_airflow_env_when_process_env_missing(self):
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+
+        from dags.dag_daily_job_lakehouse_pipeline import silver_enabled_from_environment
+
+        with TemporaryDirectory() as tmp:
+            env_path = os.path.join(tmp, "airflow.env")
+            with open(env_path, "w", encoding="utf-8") as handle:
+                handle.write("LAKEHOUSE_SILVER_ENABLED=true\n")
+            with patch.dict(os.environ, {"LAKEHOUSE_AIRFLOW_ENV": env_path}, clear=True):
+                self.assertTrue(silver_enabled_from_environment())
+
     def test_dag_has_preflight_crawlers_audit_and_summary(self):
         os.environ.setdefault("AIRFLOW_HOME", "/home/womcloud/airflow")
         from dags.dag_daily_job_lakehouse_pipeline import CRAWLERS, dag
