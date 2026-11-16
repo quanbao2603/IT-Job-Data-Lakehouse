@@ -24,6 +24,7 @@ PYTHON = os.environ.get("LAKEHOUSE_PYTHON", f"{PROJECT_ROOT}/lakehouse_env/bin/p
 STATE_DB = os.environ.get("LAKEHOUSE_STATE_DB_PATH", f"{PROJECT_ROOT}/data/state_store.db")
 MAX_PAGES = os.environ.get("LAKEHOUSE_INCREMENTAL_MAX_PAGES", "5")
 MAX_ACTIVE_TASKS = min(max(int(os.environ.get("LAKEHOUSE_MAX_ACTIVE_TASKS", "3")), 1), 3)
+SILVER_ENABLED = os.environ.get("LAKEHOUSE_SILVER_ENABLED", "false").lower() == "true"
 FAILURE_LEDGER = os.environ.get(
     "LAKEHOUSE_FAILURE_LEDGER",
     f"{PROJECT_ROOT}/data/operational/source_failures.jsonl",
@@ -145,8 +146,54 @@ def _audit_after_crawl(**context: Any) -> Dict[str, Any]:
     return {"source_results": results, "audit": audit}
 
 
+def _run_silver(**context: Any) -> Dict[str, Any]:
+    if not SILVER_ENABLED:
+        result = {"status": "DISABLED", "reason": "LAKEHOUSE_SILVER_ENABLED=false"}
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return result
+    from src.etl.bronze_to_silver import BronzeToSilverPipeline
+    from src.etl.silver_writer import SilverWriter
+    from src.storage.entity_registry import EntityRegistry
+    from src.storage.state_manager import StateManager
+    from src.storage.atomic_writer import load_env_file
+
+    load_env_file()
+    run_id = str(context["dag_run"].run_id)
+    registry = EntityRegistry(STATE_DB)
+    state = StateManager(STATE_DB)
+    pipeline = BronzeToSilverPipeline(
+        registry=registry,
+        writer=SilverWriter(
+            os.environ.get("LAKEHOUSE_SILVER_ROOT", f"{PROJECT_ROOT}/data/silver"),
+            max_records_per_batch=int(os.environ.get("LAKEHOUSE_SILVER_MAX_RECORDS_PER_BATCH", "5000")),
+        ),
+        run_id=run_id,
+        resolution_version=os.environ.get("LAKEHOUSE_SILVER_RESOLUTION_VERSION", "v1"),
+        pending_review_path=os.environ.get(
+            "LAKEHOUSE_PENDING_REVIEW_PATH", f"{PROJECT_ROOT}/data/operational/pending_review.csv"
+        ),
+    )
+    object_reader = state_reader
+    report = pipeline.process_bronze_objects(state, object_reader, platforms=set(CRAWLERS))
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    return report
+
+
+def state_reader(object_key: str):
+    """Stream one Bronze object through the existing AtomicWriter boundary."""
+    from src.storage.atomic_writer import AtomicWriter
+    reader = AtomicWriter(
+        endpoint=os.getenv("MINIO_ENDPOINT", "localhost:9000"),
+        access_key=os.getenv("MINIO_ROOT_USER", os.getenv("MINIO_ACCESS_KEY")),
+        secret_key=os.getenv("MINIO_ROOT_PASSWORD", os.getenv("MINIO_SECRET_KEY")),
+        secure=os.getenv("MINIO_SECURE", "false").lower() == "true",
+    )
+    yield from reader.stream_bronze_records(object_key)
+
+
 def _report_success(**context: Any) -> Dict[str, Any]:
     audit_result = context["ti"].xcom_pull(task_ids="bronze_audit_after_crawl") or {}
+    silver_result = context["ti"].xcom_pull(task_ids="silver_pipeline_guard") or {"status": "DISABLED"}
     source_results = audit_result.get("source_results", {})
     summary = {
         "status": "SUCCESS",
@@ -154,7 +201,7 @@ def _report_success(**context: Any) -> Dict[str, Any]:
         "empty_success_count": sum(1 for result in source_results.values() if result.get("records_ingested", 0) == 0),
         "records_ingested": sum(int(result.get("records_ingested", 0)) for result in source_results.values()),
         "bronze_audit": audit_result.get("audit", {}).get("status"),
-        "silver_trigger": "DISABLED",
+        "silver_trigger": silver_result.get("status", "DISABLED"),
     }
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     return summary
@@ -207,9 +254,16 @@ with DAG(
     )
     crawl_tasks >> bronze_audit
 
+    silver_pipeline_guard = PythonOperator(
+        task_id="silver_pipeline_guard",
+        python_callable=_run_silver,
+        trigger_rule=TriggerRule.ALL_SUCCESS,
+    )
+    bronze_audit >> silver_pipeline_guard
+
     pipeline_summary = PythonOperator(
         task_id="crawl_pipeline_summary",
         python_callable=_report_success,
         trigger_rule=TriggerRule.ALL_SUCCESS,
     )
-    bronze_audit >> pipeline_summary
+    silver_pipeline_guard >> pipeline_summary
