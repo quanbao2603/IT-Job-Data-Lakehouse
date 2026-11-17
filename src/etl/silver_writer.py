@@ -60,6 +60,28 @@ class SilverWriter:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
     @staticmethod
+    def _partition_values(partition: str) -> dict[str, Optional[str]]:
+        values: dict[str, Optional[str]] = {"year": None, "month": None, "day": None}
+        for component in str(partition).strip("/").split("/"):
+            if "=" in component:
+                key, value = component.split("=", 1)
+                if key in values:
+                    values[key] = value
+        return values
+
+    @classmethod
+    def _schema_for_partition(cls, dataset: str, partition: str) -> pa.Schema:
+        schema = SCHEMAS[dataset]
+        return schema.append(pa.field("year", pa.string(), nullable=True)).append(
+            pa.field("month", pa.string(), nullable=True)
+        ).append(pa.field("day", pa.string(), nullable=True))
+
+    @classmethod
+    def _rows_for_partition(cls, dataset: str, rows: list[dict[str, Any]], partition: str) -> list[dict[str, Any]]:
+        values = cls._partition_values(partition)
+        return [{**row, **values} for row in rows]
+
+    @staticmethod
     def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=path.parent) as tmp:
@@ -115,12 +137,15 @@ class SilverWriter:
         self._verify_minio_object(key, manifest_path.stat().st_size, checksum)
 
     def _write_batch(self, dataset: str, rows: list[dict[str, Any]], partition: str, batch_index: int) -> dict[str, Any]:
-        schema = SCHEMAS[dataset]
+        schema = self._schema_for_partition(dataset, partition)
+        rows = self._rows_for_partition(dataset, rows, partition)
         destination = self.root / dataset / partition
         destination.mkdir(parents=True, exist_ok=True)
-        identity_digest = self._identity_digest(dataset, rows)
+        identity_digest = self._identity_digest(dataset, [
+            {k: v for k, v in row.items() if k not in {"year", "month", "day"}} for row in rows
+        ])
         digest = hashlib.sha256((dataset + partition).encode()).hexdigest()[:16]
-        filename = f"part-{identity_digest}-{batch_index:05d}-{digest}.parquet"
+        filename = f"part-{identity_digest}-{digest}.parquet"
         final_path = destination / filename
         manifest_path = self._manifest_path(dataset, partition, identity_digest)
         object_key = f"{dataset}/{partition}/{filename}"

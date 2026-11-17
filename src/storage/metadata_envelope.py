@@ -112,6 +112,9 @@ class MetadataEnvelope:
     ) -> Dict[str, Any]:
         source_clean = source.lower().strip()
         now_utc = datetime.utcnow().isoformat() + "Z"
+        observed_at = None
+        if isinstance(raw_payload, dict):
+            observed_at = raw_payload.get("observed_at") or raw_payload.get("scraped_at")
         current_run_id = run_id or f"run_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
         checksum = cls._compute_sha256(raw_payload)
 
@@ -133,6 +136,7 @@ class MetadataEnvelope:
         return {
             "_metadata": {
                 "ingested_at": now_utc,
+                "observed_at": observed_at,
                 "source": source_clean,
                 "payload_checksum": checksum,
                 "pipeline_run_id": current_run_id,

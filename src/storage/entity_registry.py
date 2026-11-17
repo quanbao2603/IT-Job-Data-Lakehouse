@@ -228,6 +228,13 @@ class EntityRegistry:
             )
             return result.rowcount == 1
 
+    def get_observation(self, observation_id: str) -> Optional[sqlite3.Row]:
+        with closing(self._connect()) as conn:
+            return conn.execute(
+                "SELECT * FROM silver_observation_registry WHERE observation_id = ?",
+                (observation_id,),
+            ).fetchone()
+
     def list_observations(self, unified_job_id: Optional[str] = None) -> list[sqlite3.Row]:
         with closing(self._connect()) as conn:
             if unified_job_id is None:

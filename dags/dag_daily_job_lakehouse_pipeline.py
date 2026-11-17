@@ -174,9 +174,19 @@ def _run_silver(**context: Any) -> Dict[str, Any]:
     from src.etl.silver_writer import SilverWriter
     from src.storage.entity_registry import EntityRegistry
     from src.storage.state_manager import StateManager
+    from minio import Minio
     from src.storage.atomic_writer import load_env_file
 
     load_env_file()
+    silver_client = Minio(
+        endpoint=os.getenv("MINIO_ENDPOINT", "localhost:9000"),
+        access_key=os.getenv("MINIO_ROOT_USER", os.getenv("MINIO_ACCESS_KEY")),
+        secret_key=os.getenv("MINIO_ROOT_PASSWORD", os.getenv("MINIO_SECRET_KEY")),
+        secure=os.getenv("MINIO_SECURE", "false").lower() == "true",
+    )
+    silver_bucket = os.getenv("MINIO_SILVER_BUCKET", "silver")
+    if not silver_client.bucket_exists(silver_bucket):
+        silver_client.make_bucket(silver_bucket)
     run_id = str(context["dag_run"].run_id)
     registry = EntityRegistry(STATE_DB)
     state = StateManager(STATE_DB)
@@ -185,6 +195,8 @@ def _run_silver(**context: Any) -> Dict[str, Any]:
         writer=SilverWriter(
             os.environ.get("LAKEHOUSE_SILVER_ROOT", f"{PROJECT_ROOT}/data/silver"),
             max_records_per_batch=int(os.environ.get("LAKEHOUSE_SILVER_MAX_RECORDS_PER_BATCH", "5000")),
+            minio_client=silver_client,
+            bucket=silver_bucket,
         ),
         run_id=run_id,
         resolution_version=os.environ.get("LAKEHOUSE_SILVER_RESOLUTION_VERSION", "v1"),
@@ -195,6 +207,8 @@ def _run_silver(**context: Any) -> Dict[str, Any]:
     object_reader = state_reader
     report = pipeline.process_bronze_objects(state, object_reader, platforms=set(CRAWLERS))
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    if report.get("status") != "SUCCESS":
+        raise RuntimeError(f"Silver pipeline failed: {report.get('status')}")
     return report
 
 

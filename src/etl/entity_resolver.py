@@ -240,9 +240,16 @@ class EntityResolver:
         source_job_id = str(observation.get("source_job_id") or "").strip()
         required = ("observation_id", "job_title", "company_name")
         if not platform or not source_job_id:
-            return MatchResult(None, None, "NONE", None, "UNMATCHED", "Missing platform or source_job_id")
+            result = MatchResult(None, None, "NONE", None, "UNMATCHED", "Missing platform or source_job_id")
+            if observation.get("observation_id"):
+                self._record_observation(observation, None, None)
+                self._record_link(observation, result)
+            return result
         if any(not str(observation.get(field) or "").strip() for field in required):
-            return MatchResult(None, None, "NONE", None, "UNMATCHED", "Missing mandatory resolver input")
+            result = MatchResult(None, None, "NONE", None, "UNMATCHED", "Missing mandatory resolver input")
+            self._record_observation(observation, None, None)
+            self._record_link(observation, result)
+            return result
 
         prior_links = self.registry.list_links(observation["observation_id"])
         previous_version_id = next(

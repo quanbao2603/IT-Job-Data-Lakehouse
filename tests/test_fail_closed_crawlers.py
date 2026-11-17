@@ -77,6 +77,17 @@ class TestFailClosedCrawlers(unittest.TestCase):
         with self.assertRaisesRegex(CrawlerSourceError, "HTTP 403"):
             crawler._make_request("https://example.invalid/listing")
 
+    def test_topcv_uses_working_cloudflare_impersonation_profile(self):
+        crawler = TopCVCrawler.__new__(TopCVCrawler)
+        with patch("src.crawlers.topcv_crawler.requests.Session") as session_factory, patch(
+            "src.crawlers.topcv_crawler.HAVE_CURL_CFFI", True
+        ):
+            session_factory.return_value.headers = {}
+            session_factory.return_value.cookies.update = lambda *_args, **_kwargs: None
+            crawler.cookie = ""
+            crawler._create_session()
+        session_factory.assert_called_once_with(impersonate="chrome120")
+
     def test_empty_listing_with_source_total_is_parser_failure(self):
         crawler = UpziCrawler.__new__(UpziCrawler)
         crawler.source_name = "upzi"

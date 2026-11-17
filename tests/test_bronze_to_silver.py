@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pyarrow.parquet as pq
+
 from src.etl.bronze_to_silver import BronzeToSilverPipeline
 from src.etl.entity_resolver import EntityResolver
 from src.etl.silver_writer import SilverWriter
@@ -51,7 +53,39 @@ class TestBronzeToSilverPipeline(unittest.TestCase):
             self.assertTrue(list((Path(silver_root) / "quarantine").rglob("*.parquet")))
             self.assertTrue((Path(silver_root) / "audit_logs" / "run_run-test.json").exists())
 
-    def test_replay_is_idempotent_for_same_envelope(self):
+    def test_replay_does_not_append_duplicate_observation_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = EntityRegistry(str(Path(tmp) / "state.db"))
+            root = Path(tmp) / "silver"
+            pipeline = BronzeToSilverPipeline(
+                registry=registry,
+                writer=SilverWriter(str(root)),
+                run_id="run-test",
+                pending_review_path=str(Path(tmp) / "pending_review.csv"),
+            )
+            envelope = self._envelope()
+            pipeline.process([envelope])
+            pipeline.process([envelope])
+            observation_files = list((root / "observations").rglob("*.parquet"))
+            self.assertEqual(sum(pq.read_metadata(path).num_rows for path in observation_files), 1)
+
+    def test_schema_drift_is_exposed_in_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = EntityRegistry(str(Path(tmp) / "state.db"))
+            pipeline = BronzeToSilverPipeline(
+                registry=registry,
+                writer=SilverWriter(str(Path(tmp) / "silver")),
+                run_id="run-drift",
+                pending_review_path=str(Path(tmp) / "pending_review.csv"),
+            )
+            envelope = self._envelope()
+            envelope["_rescued_data"] = {"new_source_field": "value"}
+            envelope["_metadata"]["payload_checksum"] = MetadataEnvelope._compute_sha256(
+                {**envelope["raw_payload"], **envelope["_rescued_data"]}
+            )
+            report = pipeline.process([envelope])
+            self.assertTrue(report["schema_drift_warnings"])
+
         with tempfile.TemporaryDirectory() as tmp:
             registry = EntityRegistry(str(Path(tmp) / "state.db"))
             pipeline = BronzeToSilverPipeline(

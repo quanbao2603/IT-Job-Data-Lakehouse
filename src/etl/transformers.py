@@ -169,16 +169,41 @@ def _iso_or_none(value: Any) -> Optional[str]:
         return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else None
 
 
+def _as_string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in re.split(r"[,;/|]", value) if item.strip()]
+    if isinstance(value, (list, tuple, set)):
+        return [_text(item) for item in value if _text(item)]
+    return [_text(value)] if _text(value) else []
+
+
+def _as_string_scalar(value: Any) -> Optional[str]:
+    """Coerce source scalar-or-list fields into the Silver string contract."""
+    values = _as_string_list(value)
+    return "; ".join(values) if values else None
+
+
+def _parse_experience(value: Any) -> tuple[Optional[float], Optional[float]]:
+    numbers = [float(token) for token in re.findall(r"\d+(?:\.\d+)?", normalize_text(value))]
+    if not numbers:
+        return None, None
+    return numbers[0], numbers[-1]
+
+
 def canonicalize_bronze_record(envelope: dict[str, Any], *, silver_updated_at: Optional[str] = None) -> dict[str, Any]:
     """Map one verified Bronze envelope into the 46-field Silver observation contract."""
     metadata = envelope.get("_metadata") or {}
     payload = envelope.get("raw_payload") or {}
     platform = _text(payload.get("platform") or metadata.get("source")).casefold()
     source_job_id = _text(payload.get("job_id") or payload.get("source_job_id"))
-    observed_at = _text(metadata.get("ingested_at"))
+    observed_at = _text(metadata.get("observed_at") or payload.get("observed_at") or payload.get("scraped_at") or metadata.get("ingested_at"))
     content_hash = _text(payload.get("content_hash"))
     if not platform or not source_job_id or not observed_at or not content_hash:
         raise ValueError("Bronze envelope lacks stable platform/source_job_id/observed_at/content_hash")
+    metadata_ingested_at = _text(metadata.get("ingested_at") or observed_at)
+    all_payload = {**payload, **(envelope.get("_rescued_data") or {})}
     source_url = payload.get("job_url") or payload.get("source_url")
     title = _text(payload.get("job_title"))
     company = _text(payload.get("company_name"))
@@ -189,26 +214,31 @@ def canonicalize_bronze_record(envelope: dict[str, Any], *, silver_updated_at: O
     description = strip_html(payload.get("job_description") or payload.get("description") or payload.get("general_description"))
     requirements = strip_html(payload.get("requirements") or payload.get("job_requirements") or payload.get("requirements_raw"))
     benefits = strip_html(payload.get("benefits") or payload.get("what_we_offer") or payload.get("benefits_raw"))
-    known = {"platform", "job_id", "source_job_id", "job_url", "source_url", "content_hash", "scraped_at", "job_title", "company_name", "salary", "job_location", "location", "address", "job_description", "description", "general_description", "requirements", "job_requirements", "requirements_raw", "benefits", "what_we_offer", "benefits_raw"}
+    exp_min, exp_max = _parse_experience(payload.get("experience_requirements") or payload.get("experience") or payload.get("years_of_experience"))
+    raw_skills = _as_string_list(payload.get("skills") or payload.get("required_skills") or payload.get("overview_skills"))
+    known = {"platform", "job_id", "source_job_id", "job_url", "source_url", "content_hash", "scraped_at", "observed_at", "job_title", "company_name", "salary", "job_location", "location", "address", "job_description", "description", "general_description", "requirements", "job_requirements", "requirements_raw", "benefits", "what_we_offer", "benefits_raw", "skills", "required_skills", "overview_skills", "experience_requirements", "experience", "years_of_experience", "posted_date_iso", "posted_date", "valid_through", "deadline", "expired_on", "quantity", "job_level", "work_mode", "employment_type"}
+    posted_date = _iso_or_none(payload.get("posted_date_iso") or payload.get("posted_date"))
+    expired_date = _iso_or_none(payload.get("valid_through") or payload.get("deadline") or payload.get("expired_on"))
+    is_active = not expired_date or expired_date >= observed_at[:10]
     record = {
         "source_job_id": source_job_id, "observation_id": generate_observation_id(platform, source_job_id, observed_at, content_hash), "platform": platform,
         "source_url": source_url, "canonical_url": make_canonical_url(source_url), "content_hash": content_hash,
         "crawled_at": _text(payload.get("scraped_at") or observed_at), "observed_at": observed_at,
-        "ingested_at": observed_at, "silver_updated_at": silver_updated_at or observed_at, "is_active": True,
+        "ingested_at": metadata_ingested_at, "silver_updated_at": silver_updated_at or observed_at, "is_active": is_active,
         "job_title": title, "job_title_normalized": normalize_title(title), "job_level": classify_job_level(payload.get("job_level") or payload.get("experience")),
-        "job_expertise": payload.get("job_expertise"), "job_domain": payload.get("job_domain") or payload.get("job_industry"),
-        "work_mode": payload.get("work_mode"), "working_time": payload.get("working_time") or payload.get("employment_type"), "overtime_policy": payload.get("overtime_policy"),
-        "company_name": clean_company_name(company), "company_name_raw": company, "company_name_normalized": clean_company_name(company),
-        "company_size": payload.get("company_size"), "company_industry": payload.get("company_industry"), "company_type": payload.get("company_type") or payload.get("contract_type"), "company_country": payload.get("company_country"),
-        "city": city_raw, "city_normalized": normalize_city(city_raw), "full_address": payload.get("work_address") or payload.get("full_address") or city_raw,
+        "job_expertise": _as_string_scalar(payload.get("job_expertise")), "job_domain": _as_string_scalar(payload.get("job_domain") or payload.get("job_industry")),
+        "work_mode": _as_string_scalar(payload.get("work_mode")), "working_time": _as_string_scalar(payload.get("working_time") or payload.get("employment_type")), "overtime_policy": _as_string_scalar(payload.get("overtime_policy")),
+        "company_name": clean_company_name(company), "company_name_raw": company, "company_name_normalized": clean_company_name(company), "company_size": _as_string_scalar(payload.get("company_size")),
+        "company_industry": _as_string_scalar(payload.get("company_industry")), "company_type": _as_string_scalar(payload.get("company_type") or payload.get("contract_type")), "company_country": _as_string_scalar(payload.get("company_country")),
+        "city": _as_string_scalar(city_raw), "city_normalized": normalize_city(city_raw), "full_address": _as_string_scalar(payload.get("work_address") or payload.get("full_address") or city_raw),
         "salary_raw": payload.get("salary"), "salary_min_vnd": salary_min, "salary_max_vnd": salary_max, "is_negotiable": negotiable, "salary_currency": currency,
-        "exp_years_min": None, "exp_years_max": None, "vacancies_count": int(payload.get("quantity") or 1),
-        "posted_date": _iso_or_none(payload.get("posted_date_iso") or payload.get("posted_date")), "expired_date": _iso_or_none(payload.get("valid_through") or payload.get("deadline") or payload.get("expired_on")),
-        "skills_raw": standardize_skills(payload.get("skills") or payload.get("required_skills") or payload.get("overview_skills")),
+        "exp_years_min": exp_min, "exp_years_max": exp_max, "vacancies_count": max(1, int(payload.get("quantity") or 1)),
+        "posted_date": posted_date, "expired_date": expired_date,
+        "skills_raw": raw_skills,
         "skills_standardized": standardize_skills(description + " " + requirements + " " + benefits),
         "job_description_clean": description or None, "description_normalized": normalize_text(description) or None,
         "requirements_clean": requirements or None, "benefits_clean": benefits or None,
-        "platform_specific_attributes": build_platform_specific_attributes(payload, known),
+        "platform_specific_attributes": build_platform_specific_attributes(all_payload, known),
     }
     return record
 

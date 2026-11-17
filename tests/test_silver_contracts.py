@@ -13,6 +13,7 @@ from src.etl.transformers import (
 from src.schemas.entity_links_schema import SILVER_ENTITY_LINKS_SCHEMA
 from src.schemas.entity_schema import SILVER_ENTITY_SCHEMA
 from src.schemas.silver_schema import QUARANTINE_SCHEMA, SILVER_OBSERVATIONS_SCHEMA
+from src.storage.metadata_envelope import MetadataEnvelope
 
 
 class TestSilverContracts(unittest.TestCase):
@@ -51,14 +52,22 @@ class TestSilverContracts(unittest.TestCase):
                 "content_hash": "hash-1", "scraped_at": "2026-11-16T01:00:00Z", "job_title": "Urgent Backend Engineer",
                 "company_name": "Công ty TNHH Example JSC", "salary": "120 triệu/năm", "job_location": "Hanoi",
                 "job_description": "<p>Python and JavaScript</p>", "requirements": "Python", "benefits": "Remote",
+                "working_time": ["FULL_TIME"],
             },
         }
+        raw_payload = dict(envelope.get("raw_payload") or {})
+        raw_payload["observed_at"] = "2026-11-16T02:00:00Z"
+        envelope["raw_payload"] = raw_payload
+        envelope["_metadata"]["payload_checksum"] = MetadataEnvelope._compute_sha256(raw_payload)
+        envelope["_metadata"]["observed_at"] = "2026-11-16T02:00:00Z"
         record = canonicalize_bronze_record(envelope)
+
         self.assertEqual(len(record), 46)
         self.assertEqual(record["observation_id"], generate_observation_id("itviec", "job-1", "2026-11-16T02:00:00Z", "hash-1"))
         self.assertEqual(record["company_name"], "example")
         self.assertEqual(record["city_normalized"], "Hà Nội")
         self.assertEqual(record["salary_min_vnd"], 10_000_000)
+        self.assertEqual(record["working_time"], "FULL_TIME")
 
     def test_skills_use_boundaries_and_do_not_confuse_java_script(self):
         skills = standardize_skills("JavaScript, Java, Python")

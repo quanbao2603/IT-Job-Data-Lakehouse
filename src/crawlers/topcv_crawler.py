@@ -54,7 +54,7 @@ class TopCVCrawler(BaseCrawler):
 
     def _create_session(self):
         if HAVE_CURL_CFFI:
-            s = requests.Session(impersonate="chrome124")
+            s = requests.Session(impersonate="chrome120")
         else:
             s = requests.Session()
 

@@ -181,6 +181,8 @@ class BronzeToSilverPipeline:
             raise ValueError(f"Unknown Silver platforms: {sorted(unknown)}")
         aggregate = Counter()
         observed_by_platform: dict[str, set[str]] = {}
+        schema_drift_warnings: set[str] = set()
+        failed_platforms: set[str] = set()
         last_report: dict[str, Any] = {
             "run_id": self.run_id,
             "pipeline": "bronze_to_silver_v1",
@@ -190,7 +192,7 @@ class BronzeToSilverPipeline:
             "partial_run": False,
             "coverage_warning": False,
             "metrics": {},
-            "schema_drift_warnings": [],
+            "schema_drift_warnings": sorted(set(schema_drift_warnings)),
             "status": "SUCCESS",
         }
         for platform in sorted(selected):
@@ -205,11 +207,13 @@ class BronzeToSilverPipeline:
                     if len(batch) >= self.max_records_per_batch:
                         report = self.process(batch, partial_run=True)
                         aggregate.update(report["metrics"])
+                        schema_drift_warnings.update(report.get("schema_drift_warnings", []))
                         last_report = report
                         batch = []
                 if batch:
                     report = self.process(batch, partial_run=True)
                     aggregate.update(report["metrics"])
+                    schema_drift_warnings.update(report.get("schema_drift_warnings", []))
                     last_report = report
         last_report["metrics"] = dict(aggregate)
         last_report["metrics"]["quarantine_rate_pct"] = round(
@@ -221,6 +225,10 @@ class BronzeToSilverPipeline:
         last_report["observed_source_job_ids"] = {
             platform: sorted(ids) for platform, ids in sorted(observed_by_platform.items())
         }
+        last_report["schema_drift_warnings"] = sorted(schema_drift_warnings)
+        last_report["failed_platforms"] = sorted(failed_platforms)
+        last_report["coverage_warning"] = bool(failed_platforms)
+        last_report["partial_run"] = bool(failed_platforms) or last_report.get("partial_run", False)
         self.writer.write_audit_log(last_report, self.run_id)
         return last_report
 
@@ -246,7 +254,9 @@ class BronzeToSilverPipeline:
             review_required_count=0,
             distinct_entity_count=0,
             unmatched_count=0,
+            replayed_observation_count=0,
         )
+        schema_drift_warnings: list[str] = []
         for envelope in envelopes:
             metrics["total_observations_processed"] += 1
             if not MetadataEnvelope.verify_integrity(envelope):
@@ -255,7 +265,12 @@ class BronzeToSilverPipeline:
                 metrics["quarantine_count"] += 1
                 continue
             try:
+                rescued = envelope.get("_rescued_data") or {}
+                if rescued:
+                    schema_drift_warnings.extend(sorted(str(key) for key in rescued))
                 record = canonicalize_bronze_record(envelope)
+                if self.registry.get_observation(record["observation_id"]) is not None:
+                    metrics["replayed_observation_count"] += 1
                 quality = validate_observation(record)
                 if not quality.accepted:
                     raise ValueError(quality.quarantine_reason or "QUALITY_GATE_REJECTED")
@@ -350,7 +365,7 @@ class BronzeToSilverPipeline:
                 self.writer.write("entities", rows, partition)
 
         # Keep every successful batch auditable and expose the explicit publish gate input.
-        report_metrics = dict(metrics)
+        report_metrics: dict[str, Any] = dict(metrics)
         report_metrics["canonical_entity_count"] = len(entities)
         report_metrics["entity_link_count"] = len(links)
         total = metrics["total_observations_processed"]
@@ -369,7 +384,7 @@ class BronzeToSilverPipeline:
             "partial_run": partial_run,
             "coverage_warning": bool(failed_platforms),
             "metrics": report_metrics,
-            "schema_drift_warnings": [],
+            "schema_drift_warnings": sorted(set(schema_drift_warnings)),
             "status": "SUCCESS" if not metrics["quarantine_count"] or metrics["valid_observations"] else "FAILED",
         }
         self.writer.write_audit_log(report, self.run_id)
