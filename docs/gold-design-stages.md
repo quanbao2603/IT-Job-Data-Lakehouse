@@ -1,7 +1,7 @@
 # Thiết kế Chi tiết Kiến trúc Tầng Vàng (Gold Layer) — IT Job Data Lakehouse
 
 > **Dự án:** IT Job Data Lakehouse
-> **Phiên bản tài liệu:** 3.0 — 18/11/2026. Bản này (a) khảo sát lại toàn bộ code sau 4 commit Hermes (`b806218`, `7c7ee94`, `e0359c0`, `fa31f59`), (b) tích hợp quyết định D-G01→D-G05 của chủ thiết kế Gold, và (c) **đã trực tiếp sửa 5 sai lệch nghiêm trọng trong code Silver** (GAP-1, GAP-5, GAP-6, GAP-8 và test portable Windows), nâng số test Silver từ 45 lên 55 và tất cả đều pass. Chỉ còn GAP-2, GAP-3, GAP-7, GAP-9, GAP-10 là việc chưa làm.
+> **Phiên bản tài liệu:** 4.0 — 18/11/2026. Bản 3.0 khảo sát code sau 4 commit Hermes và sửa 5 sai lệch Silver. **Bản 4.0 đã triển khai xong tầng Gold**: `src/gold/` (11 module), `dags/dag_gold_mart_build.py`, và 30 test nghiệm thu. Trong lúc triển khai đã phát hiện và sửa thêm **2 bug tích hợp nghiêm trọng ở Silver** (mục Giai đoạn 0 §7). Tổng kiểm thử hiện tại: **87 test pass**.
 > **Phạm vi:** Phân tích **nguồn cung tin tuyển dụng được hệ thống quan sát** trên 9 nền tảng (`careerviet`, `upzi`, `vietnamdevs`, `vieclam24h`, `devwork`, `itviec`, `topcv`, `topdev`, `vietnamworks`).
 > **Nguồn dữ liệu vào:** Silver `entities` (E), `entity_links` (L), `observations` (O) + manifest `COMPLETE` + audit log của một phiên Silver.
 > **Đầu ra:** 5 dimension, 4 fact nền tảng, 3 bảng tổng hợp BI trong **PostgreSQL database `lakehouse`**, công bố theo `gold_release_id` cho Power BI.
@@ -62,7 +62,55 @@ Bước 6  Tôi: DAG daily_gold_mart_build + semantic views + 18 test TG.
 Bước 7  Hermes: review toàn bộ, tinh chỉnh.
 ```
 
-**Chưa viết dòng code Gold nào.** Toàn bộ `src/gold/` trong tài liệu này là đường dẫn dự kiến, chưa tồn tại trong repo. Các sửa đổi ở đợt này đều nằm ở tầng **Silver** (`src/etl/`, `src/storage/`, `tests/`).
+### Tầng Gold: ĐÃ TRIỂN KHAI XONG PHẦN CODE
+
+```text
+src/gold/
+├── contract.py               Hằng số nghiệp vụ D-G01..D-G07 (status, city axis, window)
+├── timeutil.py               UTC parse, date_key, report_date theo Asia/Ho_Chi_Minh
+├── ddl.sql                   20 bảng: 5 dim + 7 fact + 4 control + 4 staging
+├── semantic_views.sql        10 view BI, tất cả ràng buộc vào active_release
+├── connection.py             psycopg2 lazy import, đọc credential từ env, apply_ddl
+├── silver_release_reader.py  Đọc release COMPLETE, verify sha256 + record count,
+│                             dựng effective_entity / effective_link / source_observation
+├── load_dimensions.py        dim_date, dim_platform, dim_company, dim_skill + key hash
+├── load_dim_job.py           SCD2, tái dùng đúng choose_canonical() của Silver
+├── load_facts.py             4 fact nền tảng
+├── load_aggregates.py        3 bảng BI + percentile_cont
+├── data_quality.py           27 check (26 theo thiết kế + DQ-23b và DQ-27)
+├── release_controller.py     Load idempotent, ghi DQ, publish transaction, MISSING day
+└── run_gold_mart.py          CLI, exit 0 chỉ khi PUBLISHED
+
+dags/dag_gold_mart_build.py   DAG riêng, schedule 05:00, max_active_tasks=2
+tests/test_gold_mart.py       30 test, gồm 1 test end-to-end từ Silver release thật
+```
+
+**Kiến trúc test được:** toàn bộ luật nghiệp vụ nằm trong hàm thuần (không chạm PostgreSQL), tầng SQL chỉ là executor mỏng. Nhờ vậy 30 test chạy được trên Windows CI lẫn VPS mà không cần database thật.
+
+**Test end-to-end đã chứng minh chuỗi thật hoạt động:**
+
+```text
+BronzeToSilverPipeline.process_bronze_objects()
+    → seal_silver_release() → releases/<id>.json status COMPLETE
+    → latest_release() chọn đúng release consumable
+    → verify_release() khớp sha256 và record count từng object
+    → build_bundle() dựng 5 dim + 7 fact
+    → run_checks() không có BLOCK failure
+    → job_domain "CNTT - Phần mềm" (nhánh industries) và "E-commerce"
+      (nhánh company_industry) đều tới được dim_job
+```
+
+### Việc còn lại để chạy thật trên VPS
+
+```text
+1. Bạn chạy block tạo database `lakehouse` + role gold_writer/gold_reader (GAP-3).
+2. Thêm biến môi trường Gold vào ~/airflow/airflow.env (GOLD_DB_*).
+3. Bật LAKEHOUSE_SILVER_ENABLED=true và chạy một phiên Silver thật để có release.
+4. Bật LAKEHOUSE_GOLD_ENABLED=true và unpause DAG daily_gold_mart_build.
+5. Hermes review toàn bộ src/gold/ và tinh chỉnh.
+```
+
+`src/utils/publish_silver_for_gold.py` (GAP-2) vẫn ghi SQLite `gold_entities`. Đây là **adapter cũ, nay không nằm trên đường đi của Gold**: Gold đọc thẳng Silver release qua `src/gold/`. Nên giữ nó làm bridge kiểm thử local hoặc xóa sau khi Hermes xác nhận không còn ai dùng.
 
 ---
 
@@ -225,7 +273,46 @@ nhưng KHÔNG có bất kỳ đường code nào gán hai giá trị này.
 Trạng thái thực tế code sinh ra: NEW, ACTIVE, UPDATED, STALE, CLOSED, REOPENED, EXPIRED.
 ```
 
-Hệ quả: **Q-G05 hiện chưa có dữ liệu để kiểm chứng**. Gold vẫn phải xử lý phòng vệ (không đếm vào `open_job_count`, giữ lineage), nhưng không thể viết acceptance test thật cho MERGED/SPLIT cho tới khi Silver có đường merge/split.
+Hệ quả: **Q-G05 hiện chưa có dữ liệu để kiểm chứng**. Gold vẫn phải xử lý phòng vệ (không đếm vào `open_job_count`, giữ lineage), nhưng không thể viết acceptance test thật cho MERGED/SPLIT cho tới khi Silver có đường merge/split. Gold đã xử lý phòng vệ bằng `chk_snapshot_closed_not_open` và `DQ-22`.
+
+### 7. Hai bug tích hợp phát hiện khi viết Gold — ĐÃ SỬA
+
+Cả hai đều không lộ ra khi chỉ test Silver, vì Silver không tự đọc lại sản phẩm của mình. Chính bước `verify_release` của Gold đã bắt được.
+
+**BUG-1 — Cờ `partial_run` nội bộ rò rỉ vào release, khiến mọi release bị Gold từ chối.**
+
+```text
+process_bronze_objects() gọi process(batch, partial_run=True) cho MỖI batch
+    → mục đích đúng: hoãn lifecycle closure khi Bronze còn đang stream.
+Nhưng sau đó nó tổng hợp report bằng:
+    last_report["partial_run"] = bool(failed_platforms) or last_report.get("partial_run", False)
+    → vế phải luôn True vì batch nào cũng partial_run=True.
+Hệ quả: release manifest luôn có partial_run=true
+    → SilverRelease.is_consumable = False
+    → Gold không bao giờ đọc được release nào.
+```
+
+Đã sửa: cờ nội bộ không được rò rỉ vào release. Report tổng nay tách bạch hai khái niệm:
+
+```python
+last_report["lifecycle_deferred"] = True      # thông tin vận hành, không chặn Gold
+last_report["partial_run"] = bool(failed_platforms)   # chỉ phản ánh nguồn cào thật sự lỗi
+```
+
+**BUG-2 — Release manifest ghi checksum stale khi cùng một partition bị ghi lại trong một phiên.**
+
+```text
+Batch 1 resolve job A → ghi entities/year=2026/month=11/day=16/part-<digest>-00000-<p>.parquet
+Batch 2 resolve job B nhưng fuzzy-match vào CÙNG entity A
+    → cùng dataset, cùng partition, cùng identity_digest (cùng unified_job_id)
+    → cùng TÊN TỆP, bị ghi đè với nội dung mới
+Release manifest vẫn giữ cả hai entry, entry đầu có sha256 của nội dung CŨ
+    → verify_release báo "checksum mismatch" và Gold từ chối release.
+```
+
+Đã sửa: `seal_silver_release()` khử trùng theo `object_key`, chỉ giữ lần ghi cuối (đúng với nội dung thật trên đĩa), và ghi thêm `superseded_object_count` để minh bạch.
+
+**Ràng buộc phát hiện thêm (không phải bug, nhưng phải biết):** `canonicalize_bronze_record` chỉ đọc từ `raw_payload`, **không đọc `_rescued_data`**. Nghĩa là chuỗi fallback `job_domain` chỉ có tác dụng với các trường **nằm trong `SCHEMA_CONTRACTS` của nền tảng đó**. Ví dụ `industries` có trong contract của careerviet/upzi/vietnamdevs/vieclam24h/devwork nhưng **không** có trong contract của itviec — nếu crawler itviec phát ra `industries`, nó sẽ rơi vào `_rescued_data` và không được map. Đây là hành vi đúng (giữ cơ chế phát hiện schema drift), nên khi thêm trường mới cho crawler phải **cập nhật luôn `SCHEMA_CONTRACTS`**.
 
 ---
 
@@ -1451,6 +1538,32 @@ Không ghi secret vào code; đọc từ ~/airflow/airflow.env hoặc .env đã 
 Task publish chỉ chạy khi run_data_quality trả PASS toàn bộ check BLOCK.
 ```
 
+### 1. Sai lệch có chủ đích giữa thiết kế và bản đã triển khai
+
+DAG thật trong `dags/dag_gold_mart_build.py` **gộp 11 task ở sơ đồ trên thành 3 task**:
+
+```text
+gold_preflight          → kiểm tra LAKEHOUSE_GOLD_ENABLED và tìm Silver release consumable
+gold_build_and_publish  → chạy subprocess src.gold.run_gold_mart (build + DQ + publish)
+gold_pipeline_summary   → báo cáo release id, DQ summary, row counts
+```
+
+Lý do: toàn bộ bước build là **một hàm thuần** (`build_bundle`) tạo ra một bundle bất biến, rồi mới ghi database. Tách nó thành 8 task Airflow sẽ phải serialize bundle qua XCom hoặc bảng tạm — thêm rủi ro và không thêm giá trị kiểm soát, vì ranh giới an toàn thật sự nằm ở **cổng DQ trước khi đổi `active_release`**, và cổng đó vẫn được giữ nguyên.
+
+Các cam kết thiết kế vẫn được bảo toàn đầy đủ:
+
+```text
+✅ Chờ Silver release COMPLETE (preflight, và build_bundle raise nếu không consumable)
+✅ Ngày MISSING được ghi vào gold_control.daily_snapshot, không ghi KPI bằng 0
+✅ Release lỗi không đổi con trỏ active_release
+✅ max_active_runs = 1, max_active_tasks = 2, dagrun_timeout = 90 phút
+✅ Schedule 05:00 Asia/Ho_Chi_Minh, sau DAG Bronze/Silver 02:00
+✅ Chạy subprocess qua LAKEHOUSE_PYTHON, giống pattern 9 crawler
+✅ Exit code 0 chỉ khi status = PUBLISHED
+```
+
+Nếu sau này cần quan sát tiến độ từng fact riêng lẻ, có thể tách `run_gold_mart` thành nhiều lệnh con mà không đổi luật nghiệp vụ.
+
 **Chỉ kích hoạt DAG Gold sau khi toàn bộ acceptance test Giai đoạn 12 PASS 100%.**
 
 ---
@@ -1509,18 +1622,18 @@ Task publish chỉ chạy khi run_data_quality trả PASS toàn bộ check BLOCK
 |---|---|---|---|
 | 1 | ✅ Sửa GAP-1: `seal_silver_release` + `write_release_manifest` | `src/etl/bronze_to_silver.py`, `src/etl/silver_writer.py` | ☑ Xong, có test |
 | 2 | Tạo database `lakehouse` + role `gold_writer`, `gold_reader` | `infrastructure/postgres/create_gold_db.sh` | ☐ |
-| 3 | DDL 5 dim + 7 fact + 4 control + staging | `src/gold/ddl.sql` | ☐ |
-| 4 | **Reader kép**: SQLite registry + Parquet observations, dựng tập hiệu lực, phát hiện `SOURCE_DIVERGENCE` | `src/gold/silver_release_reader.py` | ☐ |
-| 5 | Loader dimension | `src/gold/load_dimensions.py` | ☐ |
-| 6 | Loader `dim_job` SCD2, tái dùng đúng tie-break `choose_canonical()` | `src/gold/load_dim_job.py` | ☐ |
-| 7 | Loader 4 fact nền tảng | `src/gold/load_*.py` | ☐ |
-| 8 | Loader 3 bảng tổng hợp BI | `src/gold/load_*_aggregate.py` | ☐ |
-| 9 | 26 check DQ + ghi `dq_result` | `src/gold/data_quality.py` | ☐ |
-| 10 | Release controller + publish transaction | `src/gold/release_controller.py` | ☐ |
-| 11 | Semantic views + nhãn thuật ngữ | `src/gold/semantic_views.sql` | ☐ |
-| 12 | DAG `daily_gold_mart_build` | `dags/dag_gold_mart_build.py` | ☐ |
-| 13 | 18 acceptance tests Gold | `tests/test_gold_mart.py` | ☐ |
-| 14 | Cấu hình Power BI qua SSH tunnel | `docs/powerbi-gold-connection.md` | ☐ |
+| 3 | ✅ DDL 5 dim + 7 fact + 4 control + 4 staging | `src/gold/ddl.sql` | ☑ Xong, test đếm đủ 20 bảng |
+| 4 | ✅ Reader **kép**: SQLite registry + Parquet observations, phát hiện `SOURCE_DIVERGENCE` | `src/gold/silver_release_reader.py` | ☑ Xong, có test |
+| 5 | ✅ Loader dimension | `src/gold/load_dimensions.py` | ☑ Xong, có test |
+| 6 | ✅ Loader `dim_job` SCD2, tái dùng đúng tie-break `choose_canonical()` | `src/gold/load_dim_job.py` | ☑ Xong, TG-08/TG-09 pass |
+| 7 | ✅ Loader 4 fact nền tảng | `src/gold/load_facts.py` | ☑ Xong, TG-01/05/10/11/14/15 pass |
+| 8 | ✅ Loader 3 bảng tổng hợp BI + percentile_cont | `src/gold/load_aggregates.py` | ☑ Xong, TG-13/TG-17 pass |
+| 9 | ✅ 27 check DQ + ghi `dq_result` | `src/gold/data_quality.py` | ☑ Xong, TG-06/07/18 pass |
+| 10 | ✅ Release controller + publish transaction + MISSING day | `src/gold/release_controller.py` | ☑ Xong |
+| 11 | ✅ Semantic views ràng buộc vào `active_release` | `src/gold/semantic_views.sql` | ☑ Xong, test đếm 10 view |
+| 12 | ✅ DAG `daily_gold_mart_build` (3 task, xem Giai đoạn 11 §1) | `dags/dag_gold_mart_build.py` | ☑ Xong |
+| 13 | ✅ Acceptance tests Gold | `tests/test_gold_mart.py` | ☑ 30 test pass |
+| 14 | Cấu hình Power BI qua SSH tunnel | `docs/powerbi-gold-connection.md` | ☐ Chờ DB thật trên VPS |
 | 15 | ✅ GAP-6: 4 hằng số version + `normalization_versions()` | `src/etl/transformers.py` | ☑ Xong, có test |
 | 16 | ✅ GAP-8: `job_domain` fallback `industries`/`company_industry`/`company_field` | `src/etl/transformers.py` | ☑ Xong, 4 test |
 | 17 | GAP-2: chuyển publish sang PostgreSQL, ngưng dùng SQLite `gold_entities` | `src/utils/publish_silver_for_gold.py` | ☐ |
