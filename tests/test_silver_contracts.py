@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from src.etl.transformers import (
@@ -68,6 +69,41 @@ class TestSilverContracts(unittest.TestCase):
         self.assertEqual(record["city_normalized"], "Hà Nội")
         self.assertEqual(record["salary_min_vnd"], 10_000_000)
         self.assertEqual(record["working_time"], "FULL_TIME")
+
+    def test_silver_metadata_preserves_bronze_lineage(self):
+        envelope = {
+            "_metadata": {
+                "source": "itviec",
+                "ingested_at": "2026-11-16T02:00:00Z",
+                "observed_at": "2026-11-16T01:00:00Z",
+                "pipeline_run_id": "run-bronze-1",
+                "payload_checksum": "a" * 64,
+                "format_version": "1.0",
+            },
+            "raw_payload": {
+                "platform": "itviec", "job_id": "job-1", "job_url": "https://example.test/jobs/1",
+                "content_hash": "hash-1", "scraped_at": "2026-11-16T01:00:00Z", "job_title": "Backend Engineer",
+                "company_name": "Acme", "job_description": "Python", "requirements": "Python", "benefits": "Remote",
+            },
+            "_rescued_data": {"new_source_field": "value"},
+        }
+        payload = dict(envelope["raw_payload"])
+        checksum = MetadataEnvelope._compute_sha256(
+            {**payload, **envelope["_rescued_data"]}
+        )
+        envelope["_metadata"]["payload_checksum"] = checksum
+        record = canonicalize_bronze_record(envelope)
+        metadata = json.loads(record["platform_specific_attributes"])["_bronze_metadata"]
+
+        self.assertEqual(metadata["bronze_pipeline_run_id"], "run-bronze-1")
+        self.assertEqual(metadata["bronze_payload_checksum"], checksum)
+        self.assertEqual(metadata["bronze_format_version"], "1.0")
+        self.assertEqual(metadata["bronze_schema_drift_fields"], ["new_source_field"])
+        self.assertEqual(metadata["bronze_source"], "itviec")
+        self.assertEqual(
+            json.loads(record["platform_specific_attributes"])["new_source_field"],
+            "value",
+        )
 
     def test_skills_use_boundaries_and_do_not_confuse_java_script(self):
         skills = standardize_skills("JavaScript, Java, Python")

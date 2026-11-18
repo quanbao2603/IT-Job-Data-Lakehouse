@@ -24,7 +24,11 @@ from typing import Any, Iterable, Optional
 from src.etl.entity_resolver import EntityResolver, MatchResult
 from src.etl.quality_gate import validate_observation
 from src.etl.silver_writer import SilverWriter
-from src.etl.transformers import canonicalize_bronze_record, normalization_versions
+from src.etl.transformers import (
+    build_bronze_metadata,
+    canonicalize_bronze_record,
+    normalization_versions,
+)
 from src.schemas.silver_schema import SILVER_OBSERVATIONS_SCHEMA
 from src.storage.entity_registry import EntityRegistry, utc_now
 from src.storage.metadata_envelope import MetadataEnvelope
@@ -92,7 +96,14 @@ class BronzeToSilverPipeline:
                 "is_active": True,
                 "is_negotiable": False,
                 "vacancies_count": 1,
-                "platform_specific_attributes": json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                "platform_specific_attributes": json.dumps(
+                    {
+                        **payload,
+                        "_bronze_metadata": json.loads(build_bronze_metadata(envelope)),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
             }
         )
         return values

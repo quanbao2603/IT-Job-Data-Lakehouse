@@ -202,6 +202,29 @@ def _as_string_scalar(value: Any) -> Optional[str]:
     return "; ".join(values) if values else None
 
 
+def build_bronze_metadata(envelope: dict[str, Any]) -> str:
+    """Serialize Bronze envelope metadata for row-level Silver lineage.
+
+    Payload values are intentionally excluded.  Silver keeps the normalized
+    fields separately and carries only the audit metadata plus the names of
+    rescued fields so schema drift remains traceable without duplicating raw
+    Bronze data.
+    """
+    envelope_metadata = envelope.get("_metadata") or {}
+    metadata = {
+        "bronze_source": envelope_metadata.get("source"),
+        "bronze_ingested_at": envelope_metadata.get("ingested_at"),
+        "bronze_observed_at": envelope_metadata.get("observed_at"),
+        "bronze_payload_checksum": envelope_metadata.get("payload_checksum"),
+        "bronze_pipeline_run_id": envelope_metadata.get("pipeline_run_id"),
+        "bronze_format_version": envelope_metadata.get("format_version"),
+        "bronze_schema_drift_fields": sorted(
+            str(key) for key in (envelope.get("_rescued_data") or {})
+        ),
+    }
+    return json.dumps(metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def _parse_experience(value: Any) -> tuple[Optional[float], Optional[float]]:
     numbers = [float(token) for token in re.findall(r"\d+(?:\.\d+)?", normalize_text(value))]
     if not numbers:
@@ -266,10 +289,24 @@ def canonicalize_bronze_record(envelope: dict[str, Any], *, silver_updated_at: O
         "skills_standardized": standardize_skills(description + " " + requirements + " " + benefits),
         "job_description_clean": description or None, "description_normalized": normalize_text(description) or None,
         "requirements_clean": requirements or None, "benefits_clean": benefits or None,
-        "platform_specific_attributes": build_platform_specific_attributes(all_payload, known),
+        "platform_specific_attributes": build_platform_specific_attributes(
+            all_payload, known, bronze_metadata=build_bronze_metadata(envelope)
+        ),
     }
     return record
 
 
-def build_platform_specific_attributes(payload: dict[str, Any], known_keys: set[str]) -> str:
-    return json.dumps({k: v for k, v in payload.items() if k not in known_keys}, ensure_ascii=False, sort_keys=True)
+def build_platform_specific_attributes(
+    payload: dict[str, Any],
+    known_keys: set[str],
+    *,
+    bronze_metadata: Optional[str] = None,
+) -> str:
+    attributes: dict[str, Any] = {
+        k: v for k, v in payload.items() if k not in known_keys
+    }
+    if bronze_metadata is not None:
+        # Keep the historical platform-specific shape intact and reserve one
+        # namespaced key for Bronze lineage metadata.
+        attributes["_bronze_metadata"] = json.loads(bronze_metadata)
+    return json.dumps(attributes, ensure_ascii=False, sort_keys=True)

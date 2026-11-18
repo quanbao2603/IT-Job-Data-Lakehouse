@@ -52,6 +52,17 @@ class TestBronzeToSilverPipeline(unittest.TestCase):
             self.assertTrue(list((Path(silver_root) / "observations").rglob("*.parquet")))
             self.assertTrue(list((Path(silver_root) / "quarantine").rglob("*.parquet")))
             self.assertTrue((Path(silver_root) / "audit_logs" / "run_run-test.json").exists())
+            observation_file = next((Path(silver_root) / "observations").rglob("*.parquet"))
+            silver_row = pq.read_table(observation_file).to_pylist()[0]
+            silver_metadata = json.loads(silver_row["platform_specific_attributes"])["_bronze_metadata"]
+            self.assertEqual(silver_metadata["bronze_pipeline_run_id"], "run-test")
+            self.assertEqual(silver_metadata["bronze_source"], "itviec")
+            quarantine_file = next((Path(silver_root) / "quarantine").rglob("*.parquet"))
+            quarantine_row = pq.read_table(quarantine_file).to_pylist()[0]
+            quarantine_metadata = json.loads(
+                quarantine_row["platform_specific_attributes"]
+            )["_bronze_metadata"]
+            self.assertEqual(quarantine_metadata["bronze_pipeline_run_id"], "run-test")
 
     def test_replay_does_not_append_duplicate_observation_files(self):
         with tempfile.TemporaryDirectory() as tmp:
