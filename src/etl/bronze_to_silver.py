@@ -170,8 +170,19 @@ class BronzeToSilverPipeline:
         fingerprint Gold can verify and cite as lineage.
         """
         release_id = f"silver_release_{self.run_id}"
+        # A partition can be rewritten within one run: a later batch may resolve into the
+        # same entity and produce the same identity digest with newer content. Only the
+        # last write is on disk, so sealing an earlier checksum would make the release
+        # unverifiable. Superseded entries are dropped and counted for transparency.
+        deduped: dict[str, dict[str, Any]] = {}
+        superseded = 0
+        for item in self._release_objects:
+            key = str(item.get("object_key") or item.get("path"))
+            if key in deduped:
+                superseded += 1
+            deduped[key] = item
         objects = sorted(
-            self._release_objects,
+            deduped.values(),
             key=lambda item: (str(item.get("dataset")), str(item.get("object_key"))),
         )
         identity = json.dumps(
@@ -198,6 +209,7 @@ class BronzeToSilverPipeline:
             "status": status,
             "object_count": len(objects),
             "record_count": sum(int(item.get("records") or 0) for item in objects),
+            "superseded_object_count": superseded,
             "manifest_fingerprint": fingerprint,
             "incomplete_object_count": len(incomplete),
             "metrics": report.get("metrics", {}),
@@ -291,7 +303,11 @@ class BronzeToSilverPipeline:
         last_report["schema_drift_warnings"] = sorted(schema_drift_warnings)
         last_report["failed_platforms"] = sorted(failed_platforms)
         last_report["coverage_warning"] = bool(failed_platforms)
-        last_report["partial_run"] = bool(failed_platforms) or last_report.get("partial_run", False)
+        # The per-batch partial_run flag exists only to defer lifecycle closure while
+        # Bronze objects are still streaming. It must not leak into the sealed release,
+        # otherwise every release would look partial and Gold would reject all of them.
+        last_report["lifecycle_deferred"] = True
+        last_report["partial_run"] = bool(failed_platforms)
         last_report["taxonomy_versions"] = normalization_versions()
         release = self.seal_silver_release(last_report)
         last_report["silver_release_id"] = release["silver_release_id"]
