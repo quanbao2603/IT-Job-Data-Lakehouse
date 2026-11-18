@@ -110,6 +110,13 @@ STAGING_SPECS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
          "is_primary_source", "accepted_for_gold", "source_object_key"),
         ("silver_release_id", "observation_id"),
     ),
+    "gold_staging.source_observation": (
+        ("silver_release_id", "observation_id", "platform", "source_job_id", "unified_job_id",
+         "observed_at", "job_title_normalized", "company_name_normalized", "city_normalized",
+         "job_domain", "job_level", "work_mode", "salary_min_vnd", "salary_max_vnd",
+         "skills_standardized", "source_object_key"),
+        ("silver_release_id", "observation_id"),
+    ),
     "gold_staging.conflict_report": (
         ("gold_release_id", "conflict_type", "entity_or_observation_id", "detail"),
         ("gold_release_id", "conflict_type", "entity_or_observation_id"),
@@ -178,6 +185,16 @@ def load_bundle(connection: Any, bundle: Any, *, include_staging: bool = True) -
     """Persist one Gold release. Re-running the same release is idempotent."""
     counts: dict[str, int] = {}
     with connection.cursor() as cursor:
+        # Close the old SCD2 version before inserting the replacement. The partial
+        # unique index on dim_job(unified_job_id) WHERE is_current rejects two current
+        # rows, so the order is part of the database contract.
+        for job_key_row in bundle.dim_job_closes:
+            cursor.execute(
+                "UPDATE gold.dim_job SET valid_to_release = %s, valid_to_at = %s, "
+                "is_current = FALSE WHERE job_key = %s",
+                (job_key_row["valid_to_release"], job_key_row["valid_to_at"], job_key_row["job_key"]),
+            )
+            counts["gold.dim_job_closed"] = counts.get("gold.dim_job_closed", 0) + 1
         for table in LOAD_ORDER:
             columns, conflict = (DIM_SPECS.get(table) or FACT_SPECS[table])
             rows = getattr(bundle, BUNDLE_MAP[table])
@@ -185,14 +202,6 @@ def load_bundle(connection: Any, bundle: Any, *, include_staging: bool = True) -
                 # Facts are addressed by release, so a retry replaces exactly its own rows.
                 cursor.execute(f"DELETE FROM {table} WHERE gold_release_id = %s", (bundle.gold_release_id,))
             counts[table] = _upsert(cursor, table, columns, conflict, rows)
-
-        for job_key_row in bundle.dim_job_closes:
-            cursor.execute(
-                "UPDATE gold.dim_job SET valid_to_release = %s, valid_to_at = %s, is_current = FALSE "
-                "WHERE job_key = %s",
-                (job_key_row["valid_to_release"], job_key_row["valid_to_at"], job_key_row["job_key"]),
-            )
-            counts["gold.dim_job_closed"] = counts.get("gold.dim_job_closed", 0) + 1
 
         if include_staging:
             columns, conflict = STAGING_SPECS["gold_staging.effective_entity"]
@@ -213,6 +222,16 @@ def load_bundle(connection: Any, bundle: Any, *, include_staging: bool = True) -
                 cursor, "gold_staging.effective_link", columns, conflict,
                 [{**row, "silver_release_id": bundle.silver_release_id} for row in bundle.effective_link],
             )
+            columns, conflict = STAGING_SPECS["gold_staging.source_observation"]
+            cursor.execute(
+                "DELETE FROM gold_staging.source_observation WHERE silver_release_id = %s",
+                (bundle.silver_release_id,),
+            )
+            counts["gold_staging.source_observation"] = _upsert(
+                cursor, "gold_staging.source_observation", columns, conflict,
+                [{**row, "silver_release_id": bundle.silver_release_id}
+                 for row in bundle.source_observation],
+            )
             columns, conflict = STAGING_SPECS["gold_staging.conflict_report"]
             cursor.execute(
                 "DELETE FROM gold_staging.conflict_report WHERE gold_release_id = %s",
@@ -229,6 +248,17 @@ def load_bundle(connection: Any, bundle: Any, *, include_staging: bool = True) -
             )
     connection.commit()
     return counts
+
+
+def load_current_dim_job(connection: Any) -> dict[str, dict[str, Any]]:
+    """Read current SCD2 versions so a later release can close/open versions safely."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT * FROM gold.dim_job WHERE is_current")
+        columns = [description[0] for description in cursor.description]
+        return {
+            str(row[columns.index("unified_job_id")]): dict(zip(columns, row))
+            for row in cursor.fetchall()
+        }
 
 
 def record_dq(connection: Any, gold_release_id: str, results: Iterable[dict[str, Any]]) -> int:
@@ -252,7 +282,8 @@ def record_dq(connection: Any, gold_release_id: str, results: Iterable[dict[str,
 
 
 def record_load_run(connection: Any, bundle: Any, status: str, row_counts: dict[str, int],
-                    started_at: Any, error_message: Optional[str] = None) -> None:
+                    started_at: Any, error_message: Optional[str] = None,
+                    *, finished: bool = True) -> None:
     versions = bundle.taxonomy_versions
     with connection.cursor() as cursor:
         cursor.execute(
@@ -260,8 +291,9 @@ def record_load_run(connection: Any, bundle: Any, status: str, row_counts: dict[
             "silver_manifest_fingerprint, snapshot_date, snapshot_cutoff_at, transform_version, "
             "skill_taxonomy_version, company_normalization_version, city_normalization_version, "
             "evidence_window_days, started_at, finished_at, status, row_counts, error_message) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s, %s, %s) "
-            "ON CONFLICT (gold_release_id) DO UPDATE SET finished_at=now(), status=EXCLUDED.status, "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "CASE WHEN %s THEN now() ELSE NULL END, %s, %s, %s) "
+            "ON CONFLICT (gold_release_id) DO UPDATE SET finished_at=EXCLUDED.finished_at, status=EXCLUDED.status, "
             "row_counts=EXCLUDED.row_counts, error_message=EXCLUDED.error_message",
             (bundle.gold_release_id, bundle.silver_release_id, bundle.manifest_fingerprint,
              bundle.snapshot_date, bundle.cutoff_at,
@@ -269,7 +301,7 @@ def record_load_run(connection: Any, bundle: Any, status: str, row_counts: dict[
              versions.get("skill_taxonomy_version", "unknown"),
              versions.get("company_normalization_version", "unknown"),
              versions.get("city_normalization_version", "unknown"),
-             bundle.evidence_window_days, started_at, status, _jsonb(row_counts), error_message),
+             bundle.evidence_window_days, started_at, finished, status, _jsonb(row_counts), error_message),
         )
     connection.commit()
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -165,8 +166,91 @@ def read_dataset(
     return rows
 
 
+def load_historical_release_data(
+    root: str | Path,
+    current_release: SilverRelease,
+    current_observations: Iterable[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], set[str], int]:
+    """Read verified prior observation/link history for change-event detection.
+
+    A Gold release normally contains the current bounded Silver snapshot only.  Fact 4
+    needs the complete source-job timeline, so prior COMPLETE releases are read through
+    their manifests instead of silently limiting comparison to one release.  An
+    observation first arriving in the current release but observed before the previous
+    cutoff is marked late and its recomputed event is flagged ``is_revised``.
+    """
+    release_dir = Path(root) / "releases"
+    if not release_dir.exists():
+        return [], [], set(), 0
+    current_cutoff = parse_utc(current_release.snapshot_cutoff_at)
+    prior_releases: list[SilverRelease] = []
+    for path in sorted(release_dir.glob("*.json")):
+        if path.stem == current_release.release_id:
+            continue
+        try:
+            candidate = load_release(root, path.stem)
+        except (KeyError, json.JSONDecodeError, FileNotFoundError):
+            continue
+        candidate_cutoff = parse_utc(candidate.snapshot_cutoff_at)
+        if not candidate.is_consumable or candidate_cutoff is None:
+            continue
+        if current_cutoff is not None and candidate_cutoff >= current_cutoff:
+            continue
+        problems = verify_release(candidate, root)
+        if problems:
+            raise ValueError(
+                f"historical Silver release {candidate.release_id} verification failed: {problems[:5]}"
+            )
+        prior_releases.append(candidate)
+    prior_releases.sort(key=lambda item: (item.snapshot_cutoff_at, item.release_id))
+    historical_observations: list[dict[str, Any]] = []
+    historical_links: list[dict[str, Any]] = []
+    prior_observation_ids: set[str] = set()
+    previous_cutoff = None
+    for candidate in prior_releases:
+        previous_cutoff = parse_utc(candidate.snapshot_cutoff_at)
+        for row in read_dataset(candidate, root, "observations"):
+            observation_id = str(row.get("observation_id") or "")
+            if observation_id and observation_id not in prior_observation_ids:
+                prior_observation_ids.add(observation_id)
+                historical_observations.append(row)
+        historical_links.extend(read_dataset(candidate, root, "entity_links"))
+    late_ids: set[str] = set()
+    if previous_cutoff is not None:
+        for row in current_observations:
+            observation_id = str(row.get("observation_id") or "")
+            observed_at = parse_utc(row.get("observed_at"))
+            if (
+                observation_id
+                and observation_id not in prior_observation_ids
+                and observed_at is not None
+                and observed_at <= previous_cutoff
+            ):
+                late_ids.add(observation_id)
+    return historical_observations, historical_links, late_ids, len(prior_releases)
+
+
 def _conflict(conflict_type: str, identifier: str, detail: dict[str, Any]) -> dict[str, Any]:
     return {"conflict_type": conflict_type, "identifier": str(identifier), "detail": detail}
+
+
+def _row_value(row: Any, key: str) -> Any:
+    """Read both dict fixtures and sqlite3.Row registry rows."""
+    if isinstance(row, dict):
+        return row.get(key)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _resolution_version_key(version: Any) -> tuple[int, int, str]:
+    """Order numeric resolver versions numerically, not lexicographically."""
+    text = str(version or "")
+    match = re.fullmatch(r"v(\d+)", text.casefold())
+    if match:
+        return (1, int(match.group(1)), "")
+    return (0, 0, text)
 
 
 def build_effective_link(
@@ -182,6 +266,7 @@ def build_effective_link(
     """
     limit = parse_utc(cutoff)
     best: dict[str, dict[str, Any]] = {}
+    best_keys: dict[str, tuple[Any, tuple[int, int, str]]] = {}
     conflicts: list[dict[str, Any]] = []
     for link in links:
         observation_id = str(link.get("observation_id") or "")
@@ -215,11 +300,24 @@ def build_effective_link(
             "is_primary_source": bool(link.get("is_primary_source", False)),
             "accepted_for_gold": accepted_link(status, unified_job_id),
         }
+        decision_key = (matched_at, _resolution_version_key(row["resolution_version"]))
         current = best.get(observation_id)
-        if current is None or (row["matched_at"], row["resolution_version"]) >= (
-            current["matched_at"], current["resolution_version"]
-        ):
+        if observation_id in best_keys and decision_key == best_keys[observation_id]:
+            prior = best[observation_id]
+            if (
+                prior["unified_job_id"], prior["match_status"], prior["match_method"]
+            ) != (
+                row["unified_job_id"], row["match_status"], row["match_method"]
+            ):
+                conflicts.append(_conflict(
+                    "AMBIGUOUS_LINK",
+                    observation_id,
+                    {"first": prior, "second": row},
+                ))
+            continue
+        if current is None or decision_key > best_keys[observation_id]:
             best[observation_id] = row
+            best_keys[observation_id] = decision_key
     return sorted(best.values(), key=lambda item: item["observation_id"]), conflicts
 
 
@@ -257,22 +355,33 @@ def build_effective_entity(
                 continue
             for parquet_field, registry_field in (
                 ("canonical_title", "canonical_title"),
+                ("canonical_company", "canonical_company"),
+                ("canonical_location", "canonical_city"),
                 ("entity_status", "entity_status"),
                 ("canonical_salary_min_vnd", "canonical_salary_min_vnd"),
                 ("canonical_salary_max_vnd", "canonical_salary_max_vnd"),
+                ("canonical_description", "canonical_description"),
             ):
-                if row.get(parquet_field) != registry_row[registry_field]:
+                registry_value = _row_value(registry_row, registry_field)
+                if row.get(parquet_field) != registry_value:
                     conflicts.append(_conflict("SOURCE_DIVERGENCE", unified_job_id, {
                         "field": parquet_field,
                         "parquet": row.get(parquet_field),
-                        "registry": registry_row[registry_field],
+                        "registry": registry_value,
                     }))
             # D-G06: registry values win.
-            row["canonical_job_level"] = registry_row["canonical_job_level"]
-            row["canonical_work_mode"] = registry_row["canonical_work_mode"]
-            row["canonical_description"] = (
-                registry_row["canonical_description"] or row.get("canonical_description")
-            )
+            for parquet_field, registry_field in (
+                ("canonical_title", "canonical_title"),
+                ("canonical_company", "canonical_company"),
+                ("canonical_location", "canonical_city"),
+                ("canonical_salary_min_vnd", "canonical_salary_min_vnd"),
+                ("canonical_salary_max_vnd", "canonical_salary_max_vnd"),
+                ("canonical_description", "canonical_description"),
+                ("entity_status", "entity_status"),
+            ):
+                row[parquet_field] = _row_value(registry_row, registry_field)
+            row["canonical_job_level"] = _row_value(registry_row, "canonical_job_level")
+            row["canonical_work_mode"] = _row_value(registry_row, "canonical_work_mode")
     return sorted(rows.values(), key=lambda item: item["unified_job_id"]), conflicts
 
 

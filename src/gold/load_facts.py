@@ -243,6 +243,7 @@ def build_change_events(
     gold_release_id: str,
     silver_release_id: str,
     cutoff_at: str,
+    late_observation_ids: Optional[set[str]] = None,
 ) -> list[dict[str, Any]]:
     """Fact 4: one event per observation that changed a business field of a source job.
 
@@ -309,7 +310,10 @@ def build_change_events(
                 "skill_added_count": flags["skill_added_count"],
                 "skill_removed_count": flags["skill_removed_count"],
                 "link_resolved": bool(unified_job_id),
-                "is_revised": False,
+                "is_revised": bool(late_observation_ids and (
+                    str(previous.get("observation_id") or "") in late_observation_ids
+                    or str(current.get("observation_id") or "") in late_observation_ids
+                )),
                 "observed_at": observed_at,
                 "snapshot_cutoff_at": parse_utc(cutoff_at),
                 "silver_release_id": silver_release_id,

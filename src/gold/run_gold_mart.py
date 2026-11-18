@@ -41,6 +41,7 @@ def build_gold_release(
     from src.gold.pipeline import build_bundle
     from src.gold.release_controller import (
         load_bundle,
+        load_current_dim_job,
         mark_missing_day,
         publish as publish_release,
         record_dq,
@@ -72,26 +73,31 @@ def build_gold_release(
             connection.close()
         return result
 
-    registry = EntityRegistry(state_db_path)
-    bundle = build_bundle(
-        root=silver_root,
-        release=release,
-        registry_entities=registry.list_entities(),
-        gold_release_id=gold_release_id,
-    )
-    results = run_checks(bundle)
-    summary = summarize(results)
-    blocked = [row["check_code"] for row in blocking_failures(results)]
-
     connection = connect()
     try:
         if apply_schema:
             apply_ddl(connection)
             views = os.path.join(os.path.dirname(os.path.abspath(__file__)), "semantic_views.sql")
             _apply_sql_file(connection, views)
+        registry = EntityRegistry(state_db_path)
+        bundle = build_bundle(
+            root=silver_root,
+            release=release,
+            registry_entities=[dict(row) for row in registry.list_entities()],
+            gold_release_id=gold_release_id,
+            current_dim_job=load_current_dim_job(connection),
+        )
+        results = run_checks(bundle)
+        summary = summarize(results)
+        blocked = [row["check_code"] for row in blocking_failures(results)]
+        record_load_run(connection, bundle, "RUNNING", {}, started_at, finished=False)
         row_counts = load_bundle(connection, bundle)
         record_dq(connection, bundle.gold_release_id, results)
         if not publish:
+            record_load_run(
+                connection, bundle, "DRY_RUN", row_counts, started_at,
+                error_message="publish disabled by --no-publish",
+            )
             outcome = {"status": "DRY_RUN", "publish_allowed": summary["publish_allowed"]}
         elif summary["publish_allowed"]:
             outcome = publish_release(connection, bundle, results)
@@ -99,6 +105,18 @@ def build_gold_release(
             record_load_run(connection, bundle, "FAILED", row_counts, started_at,
                             error_message="blocked by " + ",".join(blocked))
             outcome = {"status": "BLOCKED", "blocking_checks": blocked}
+    except Exception as exc:
+        connection.rollback()
+        try:
+            failed_bundle = locals().get("bundle")
+            if failed_bundle is not None:
+                record_load_run(
+                    connection, failed_bundle, "FAILED", locals().get("row_counts", {}), started_at,
+                    error_message=type(exc).__name__ + ": " + str(exc),
+                )
+        except Exception:
+            connection.rollback()
+        raise
     finally:
         connection.close()
 

@@ -30,6 +30,7 @@ from src.gold.silver_release_reader import (
     build_effective_entity,
     build_effective_link,
     build_source_observation,
+    load_historical_release_data,
     latest_release,
     read_dataset,
     verify_release,
@@ -136,6 +137,10 @@ def build_bundle(
         if release is None:
             raise FileNotFoundError(f"No consumable Silver release found under {root}/releases")
 
+    release_history_observations: list[dict[str, Any]] = []
+    historical_links: list[dict[str, Any]] = []
+    late_observation_ids: set[str] = set()
+    historical_release_count = 0
     if release is not None:
         if not release.is_consumable:
             raise ValueError(
@@ -149,6 +154,12 @@ def build_bundle(
         entities = read_dataset(release, root, "entities", object_reader=object_reader)
         links = read_dataset(release, root, "entity_links", object_reader=object_reader)
         observations = read_dataset(release, root, "observations", object_reader=object_reader)
+        (
+            release_history_observations,
+            historical_links,
+            late_observation_ids,
+            historical_release_count,
+        ) = load_historical_release_data(root, release, observations)
         resolved_cutoff = release.snapshot_cutoff_at
         resolved_silver_release = release.release_id
         resolved_fingerprint = release.manifest_fingerprint
@@ -173,10 +184,14 @@ def build_bundle(
         entities or (), object_key="entities", registry_entities=registry_entities
     )
     conflicts.extend(entity_conflicts)
-    link_rows, link_conflicts = build_effective_link(links or (), cutoff=resolved_cutoff)
+    link_rows, link_conflicts = build_effective_link(
+        [*(historical_links or ()), *(links or ())], cutoff=resolved_cutoff
+    )
     conflicts.extend(link_conflicts)
     observation_rows, observation_conflicts = build_source_observation(
-        observations or (), cutoff=resolved_cutoff, effective_links=link_rows
+        [*(release_history_observations or ()), *(observations or ())],
+        cutoff=resolved_cutoff,
+        effective_links=link_rows,
     )
     conflicts.extend(observation_conflicts)
 
@@ -200,7 +215,7 @@ def build_bundle(
     dim_job_upserts, dim_job_closes, dim_job_report = plan_dim_job(
         entity_rows, observations_by_job,
         release_id=active_release_id,
-        valid_from_at=cutoff_at,
+        valid_from_at=resolved_cutoff,
         current_versions=current_dim_job,
         links_by_observation=links_by_observation,
     )
@@ -266,10 +281,12 @@ def build_bundle(
         reports["change_event_scope"] = "release_plus_history"
     else:
         reports["change_event_scope"] = "release_only"
+    reports["historical_release_count"] = historical_release_count
+    reports["late_observation_count"] = len(late_observation_ids)
     bundle.change_event = build_change_events(
         event_observations, dim_job_by_entity,
         gold_release_id=active_release_id, silver_release_id=resolved_silver_release,
-        cutoff_at=resolved_cutoff,
+        cutoff_at=resolved_cutoff, late_observation_ids=late_observation_ids,
     )
 
     bundle.market = build_market_daily(
