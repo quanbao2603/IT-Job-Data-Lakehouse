@@ -19,11 +19,33 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.utils.trigger_rule import TriggerRule
 
+def _flag_from_environment(name: str, default: str = "false") -> bool:
+    """Read a boolean flag from the process env, falling back to the Airflow env file.
+
+    The Bronze DAG needs the same fallback, which tells us the systemd unit does not
+    always export ~/airflow/airflow.env into the worker process. Without this, Gold
+    would stay silently DISABLED even after the operator set the flag.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        env_path = os.environ.get("LAKEHOUSE_AIRFLOW_ENV", "/home/womcloud/airflow/airflow.env")
+        try:
+            with open(env_path, encoding="utf-8") as handle:
+                for line in handle:
+                    key, separator, raw_value = line.partition("=")
+                    if separator and key.strip() == name:
+                        value = raw_value.strip().strip("\"'")
+                        break
+        except OSError:
+            value = None
+    return str(value or default).lower() == "true"
+
+
 PROJECT_ROOT = os.environ.get("LAKEHOUSE_PROJECT_ROOT", "/home/womcloud/IT-Job-Data-Lakehouse")
 PYTHON = os.environ.get("LAKEHOUSE_PYTHON", f"{PROJECT_ROOT}/lakehouse_env/bin/python")
 STATE_DB = os.environ.get("LAKEHOUSE_STATE_DB_PATH", f"{PROJECT_ROOT}/data/state_store.db")
 SILVER_ROOT = os.environ.get("LAKEHOUSE_SILVER_ROOT", f"{PROJECT_ROOT}/data/silver")
-GOLD_ENABLED = str(os.environ.get("LAKEHOUSE_GOLD_ENABLED", "false")).lower() == "true"
+GOLD_ENABLED = _flag_from_environment("LAKEHOUSE_GOLD_ENABLED")
 
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
