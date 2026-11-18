@@ -88,6 +88,26 @@ class TestFailClosedCrawlers(unittest.TestCase):
             crawler._create_session()
         session_factory.assert_called_once_with(impersonate="chrome120")
 
+    def test_topcv_cools_down_after_two_requests(self):
+        crawler = TopCVCrawler.__new__(TopCVCrawler)
+        crawler.source_name = "topcv"
+        calls = []
+
+        def get(_url, **_kwargs):
+            calls.append(1)
+            return SimpleNamespace(status_code=200, text="ok")
+
+        crawler.session = SimpleNamespace(get=get)
+        crawler._requests_since_cooldown = 0
+        crawler._next_cooldown_after = 2
+        with patch("src.crawlers.topcv_crawler.random.randint", return_value=2), patch(
+            "src.crawlers.topcv_crawler.random.uniform", return_value=30.0
+        ), patch("src.crawlers.topcv_crawler.time.sleep") as sleep:
+            self.assertEqual(crawler._make_request("https://example.invalid/1"), "ok")
+            self.assertEqual(crawler._make_request("https://example.invalid/2"), "ok")
+        self.assertEqual(len(calls), 2)
+        sleep.assert_called_once_with(30.0)
+
     def test_empty_listing_with_source_total_is_parser_failure(self):
         crawler = UpziCrawler.__new__(UpziCrawler)
         crawler.source_name = "upzi"

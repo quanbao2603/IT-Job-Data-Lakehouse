@@ -30,11 +30,34 @@ class TopCVCrawler(BaseCrawler):
     SEARCH_BASE = "https://www.topcv.vn/tim-viec-lam-it?page={page}"
     REQUEST_DELAY_MIN = 1.0
     REQUEST_DELAY_MAX = 1.8
+    REQUESTS_BEFORE_COOLDOWN_MIN = 1
+    REQUESTS_BEFORE_COOLDOWN_MAX = 2
+    COOLDOWN_MIN = 30.0
+    COOLDOWN_MAX = 60.0
 
     def __init__(self, **kwargs):
         super().__init__(source_name="topcv", **kwargs)
         self.cookie = self._load_cookie()
         self.session = self._create_session()
+        self._requests_since_cooldown = 0
+        self._next_cooldown_after = self._choose_next_cooldown()
+
+    def _choose_next_cooldown(self) -> int:
+        return random.randint(self.REQUESTS_BEFORE_COOLDOWN_MIN, self.REQUESTS_BEFORE_COOLDOWN_MAX)
+
+    def _pace_after_request(self) -> None:
+        self._requests_since_cooldown = getattr(self, "_requests_since_cooldown", 0) + 1
+        next_cooldown_after = getattr(
+            self,
+            "_next_cooldown_after",
+            self.REQUESTS_BEFORE_COOLDOWN_MAX,
+        )
+        if self._requests_since_cooldown >= next_cooldown_after:
+            pause = random.uniform(self.COOLDOWN_MIN, self.COOLDOWN_MAX)
+            print(f"      [~] TopCV nghỉ chống dồn request {pause:.1f}s sau {self._requests_since_cooldown} request.")
+            time.sleep(pause)
+            self._requests_since_cooldown = 0
+            self._next_cooldown_after = self._choose_next_cooldown()
 
     def _load_cookie(self) -> str:
         candidates = [
@@ -79,6 +102,7 @@ class TopCVCrawler(BaseCrawler):
         for attempt in range(max_retries):
             try:
                 resp = self.session.get(url, timeout=20)
+                self._pace_after_request()
 
                 if resp.status_code == 200:
                     return resp.text
