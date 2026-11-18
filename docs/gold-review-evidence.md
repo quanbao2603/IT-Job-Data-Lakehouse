@@ -146,14 +146,14 @@ The active pointer stayed on the previous successful release, and the blocked ru
 Pure Gold acceptance suite after the review changes:
 
 ```text
-Ran 33 Gold tests
+Ran 34 Gold tests
 OK
 ```
 
 Full repository suite:
 
 ```text
-Ran 280 tests in 7.774s
+Ran 281 tests in 7.482s
 OK (skipped=2)
 ```
 
