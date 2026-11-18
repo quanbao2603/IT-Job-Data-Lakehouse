@@ -79,7 +79,7 @@ Additional DDL checks were also present for salary order, sample limits, freshne
 
 ### Role/ownership acceptance
 
-A fresh role-owned validation database was created with the new `infrastructure/postgres/create_gold_db.sh` procedure. Applying the DDL as `gold_writer` returned:
+A role-owned validation database was created in the temporary cluster. Applying the DDL as `gold_writer` returned:
 
 ```text
 ddl 36
