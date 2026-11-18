@@ -24,7 +24,7 @@ from typing import Any, Iterable, Optional
 from src.etl.entity_resolver import EntityResolver, MatchResult
 from src.etl.quality_gate import validate_observation
 from src.etl.silver_writer import SilverWriter
-from src.etl.transformers import canonicalize_bronze_record
+from src.etl.transformers import canonicalize_bronze_record, normalization_versions
 from src.schemas.silver_schema import SILVER_OBSERVATIONS_SCHEMA
 from src.storage.entity_registry import EntityRegistry, utc_now
 from src.storage.metadata_envelope import MetadataEnvelope
@@ -47,6 +47,7 @@ class BronzeToSilverPipeline:
         self.run_id = run_id
         self.resolution_version = resolution_version
         self.max_records_per_batch = max_records_per_batch
+        self._release_objects: list[dict[str, Any]] = []
         self.resolver = EntityResolver(
             registry,
             resolution_version=resolution_version,
@@ -118,7 +119,8 @@ class BronzeToSilverPipeline:
         )
         return result
 
-    def _entity_row(self, entity_id: str, record: dict[str, Any]) -> dict[str, Any]:
+    def _entity_row(self, entity_id: str, record: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        """Return the canonical entity row and the observation_id chosen as representative."""
         entity = self.registry.get_entity(entity_id)
         if entity is None:
             raise ValueError(f"Resolved entity not found in registry: {entity_id}")
@@ -128,7 +130,7 @@ class BronzeToSilverPipeline:
             [record] + [dict(row) for row in observations if row["observation_id"] != record["observation_id"]]
         )
         canonical_posted_date = canonical.get("posted_date") or record.get("posted_date") or entity["first_seen_at"][:10]
-        return {
+        entity_row = {
             "unified_job_id": entity_id,
             "canonical_title": entity["canonical_title"],
             "canonical_company": entity["canonical_company"],
@@ -146,8 +148,69 @@ class BronzeToSilverPipeline:
             "canonical_updated_at": entity["updated_at"],
             "resolution_version": entity["resolution_version"],
         }
+        return entity_row, str(canonical.get("observation_id") or "")
 
-    def _link_row(self, record: dict[str, Any], result: MatchResult) -> dict[str, Any]:
+    def _write_dataset(self, dataset: str, rows: list[dict[str, Any]], partition: str) -> list[dict[str, Any]]:
+        """Write one dataset partition and record every object into the open release."""
+        results = self.writer.write(dataset, rows, partition)
+        for item in results:
+            self._release_objects.append({**item, "dataset": dataset, "partition": partition})
+        return results
+
+    def seal_silver_release(
+        self,
+        report: dict[str, Any],
+        *,
+        snapshot_cutoff_at: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Freeze this run's effective object set into one addressable Silver release.
+
+        Gold must consume a release, never a day folder: this manifest is the only place
+        that states which objects together form one consistent E/L/O snapshot, with a
+        fingerprint Gold can verify and cite as lineage.
+        """
+        release_id = f"silver_release_{self.run_id}"
+        objects = sorted(
+            self._release_objects,
+            key=lambda item: (str(item.get("dataset")), str(item.get("object_key"))),
+        )
+        identity = json.dumps(
+            [
+                [item.get("dataset"), item.get("object_key"), item.get("sha256"), item.get("records")]
+                for item in objects
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        fingerprint = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        incomplete = [item for item in objects if item.get("status") != "COMPLETE"]
+        sealed_at = utc_now()
+        status = "COMPLETE" if not incomplete and report.get("status") == "SUCCESS" else "FAILED"
+        release = {
+            "silver_release_id": release_id,
+            "run_id": self.run_id,
+            "pipeline": report.get("pipeline", "bronze_to_silver_v1"),
+            "resolution_version": self.resolution_version,
+            "taxonomy_versions": normalization_versions(),
+            "snapshot_cutoff_at": snapshot_cutoff_at or sealed_at,
+            "sealed_at": sealed_at,
+            "status": status,
+            "object_count": len(objects),
+            "record_count": sum(int(item.get("records") or 0) for item in objects),
+            "manifest_fingerprint": fingerprint,
+            "incomplete_object_count": len(incomplete),
+            "metrics": report.get("metrics", {}),
+            "failed_platforms": report.get("failed_platforms", []),
+            "partial_run": bool(report.get("partial_run", False)),
+            "coverage_warning": bool(report.get("coverage_warning", False)),
+            "schema_drift_warnings": report.get("schema_drift_warnings", []),
+            "objects": objects,
+        }
+        release.update(self.writer.write_release_manifest(release, release_id))
+        return release
+
+    def _link_row(self, record: dict[str, Any], result: MatchResult, *, is_primary: bool = False) -> dict[str, Any]:
         return {
             "unified_job_id": result.unified_job_id,
             "candidate_entity_id": result.candidate_entity_id,
@@ -164,7 +227,7 @@ class BronzeToSilverPipeline:
             "review_reason": result.review_reason,
             "previous_unified_job_id": None,
             "resolution_version": self.resolution_version,
-            "is_primary_source": result.match_status == "DISTINCT_ENTITY",
+            "is_primary_source": is_primary,
         }
 
     def process_bronze_objects(
@@ -229,6 +292,13 @@ class BronzeToSilverPipeline:
         last_report["failed_platforms"] = sorted(failed_platforms)
         last_report["coverage_warning"] = bool(failed_platforms)
         last_report["partial_run"] = bool(failed_platforms) or last_report.get("partial_run", False)
+        last_report["taxonomy_versions"] = normalization_versions()
+        release = self.seal_silver_release(last_report)
+        last_report["silver_release_id"] = release["silver_release_id"]
+        last_report["silver_release_status"] = release["status"]
+        last_report["manifest_fingerprint"] = release["manifest_fingerprint"]
+        last_report["release_object_count"] = release["object_count"]
+        last_report["release_record_count"] = release["record_count"]
         self.writer.write_audit_log(last_report, self.run_id)
         return last_report
 
@@ -276,8 +346,16 @@ class BronzeToSilverPipeline:
                     raise ValueError(quality.quarantine_reason or "QUALITY_GATE_REJECTED")
                 metrics["valid_observations"] += 1
                 result = self.resolver.resolve(record, record["observed_at"])
-                links.append(self._link_row(record, result))
                 observations.append(record)
+                is_primary = False
+                if result.unified_job_id:
+                    entity_row, canonical_observation_id = self._entity_row(result.unified_job_id, record)
+                    entities[result.unified_job_id] = entity_row
+                    is_primary = bool(canonical_observation_id) and canonical_observation_id == record["observation_id"]
+                    entity = self.registry.get_entity(result.unified_job_id)
+                    if result.match_method == "SOURCE_JOB_ID" and entity is not None and entity["entity_status"] == "UPDATED":
+                        metrics["updated_entity_count"] += 1
+                links.append(self._link_row(record, result, is_primary=is_primary))
                 if result.match_status == "DISTINCT_ENTITY":
                     metrics["new_entity_count"] += 1
                     metrics["distinct_entity_count"] += 1
@@ -287,11 +365,6 @@ class BronzeToSilverPipeline:
                     metrics["unmatched_count"] += 1
                 else:
                     metrics["auto_match_count"] += 1
-                if result.unified_job_id:
-                    entities[result.unified_job_id] = self._entity_row(result.unified_job_id, record)
-                    entity = self.registry.get_entity(result.unified_job_id)
-                    if result.match_method == "SOURCE_JOB_ID" and entity is not None and entity["entity_status"] == "UPDATED":
-                        metrics["updated_entity_count"] += 1
 
             except (KeyError, TypeError, ValueError) as exc:
                 quarantine.append(self._quarantine(self._blank_observation(envelope), str(exc)))
@@ -304,7 +377,7 @@ class BronzeToSilverPipeline:
                     self._partition(record["observed_at"], platform=record["platform"]), []
                 ).append(record)
             for partition, rows in by_partition.items():
-                self.writer.write("observations", rows, partition)
+                self._write_dataset("observations", rows, partition)
         if quarantine:
             by_partition = {}
             for row in quarantine:
@@ -312,7 +385,7 @@ class BronzeToSilverPipeline:
                     self._partition(row["observed_at"], platform=row["platform"]), []
                 ).append(row)
             for partition, rows in by_partition.items():
-                self.writer.write("quarantine", rows, partition)
+                self._write_dataset("quarantine", rows, partition)
 
         # Lifecycle closure is deliberately kept outside resolver decisions so a
         # partial source run can never close entities from a missing platform.
@@ -341,7 +414,7 @@ class BronzeToSilverPipeline:
             for link in links:
                 by_partition.setdefault(self._partition(link["matched_at"]), []).append(link)
             for partition, rows in by_partition.items():
-                self.writer.write("entity_links", rows, partition)
+                self._write_dataset("entity_links", rows, partition)
         if entities:
             entity_rows = list(entities.values())
             for entity in entity_rows:
@@ -362,7 +435,7 @@ class BronzeToSilverPipeline:
                 partition_timestamp = entity.get("canonical_posted_date") or entity["first_seen_at"]
                 by_partition.setdefault(self._partition(partition_timestamp), []).append(entity)
             for partition, rows in by_partition.items():
-                self.writer.write("entities", rows, partition)
+                self._write_dataset("entities", rows, partition)
 
         # Keep every successful batch auditable and expose the explicit publish gate input.
         report_metrics: dict[str, Any] = dict(metrics)
@@ -380,6 +453,7 @@ class BronzeToSilverPipeline:
             "pipeline": "bronze_to_silver_v1",
             "execution_mode": "partial" if partial_run else "batch",
             "resolution_version": self.resolution_version,
+            "taxonomy_versions": normalization_versions(),
             "failed_platforms": sorted(failed_platforms),
             "partial_run": partial_run,
             "coverage_warning": bool(failed_platforms),

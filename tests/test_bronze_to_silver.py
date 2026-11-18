@@ -140,7 +140,8 @@ class TestBronzeToSilverPipeline(unittest.TestCase):
             pipeline.process([envelope])
             entity_files = list((Path(tmp) / "silver" / "entities").rglob("*.parquet"))
             self.assertTrue(entity_files)
-            self.assertIn("year=2026/month=11/day=10", str(entity_files[0]))
+            self.assertIn("year=2026/month=11/day=10", entity_files[0].as_posix())
+
     def test_incremental_manifest_batches_do_not_close_historical_entities(self):
         with tempfile.TemporaryDirectory() as tmp:
             registry = EntityRegistry(str(Path(tmp) / "state.db"))

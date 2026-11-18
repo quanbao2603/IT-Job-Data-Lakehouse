@@ -38,6 +38,23 @@ SKILL_TAXONOMY = (
     "scrum", "kanban", "system design", "solid", "design patterns", "technical writing", "wordpress", "shopify",
 )
 
+# Versioned normalization contracts. Gold records these in gold_control.load_run so a
+# taxonomy or naming-rule change can never silently rewrite historical reports.
+SKILL_TAXONOMY_VERSION = "skill-taxonomy-v1"
+COMPANY_NORMALIZATION_VERSION = "company-normalization-v1"
+CITY_NORMALIZATION_VERSION = "city-normalization-v1"
+TRANSFORM_VERSION = "bronze-to-silver-transform-v1"
+
+
+def normalization_versions() -> dict[str, str]:
+    """Expose every versioned normalization contract for release manifests."""
+    return {
+        "skill_taxonomy_version": SKILL_TAXONOMY_VERSION,
+        "company_normalization_version": COMPANY_NORMALIZATION_VERSION,
+        "city_normalization_version": CITY_NORMALIZATION_VERSION,
+        "transform_version": TRANSFORM_VERSION,
+    }
+
 
 def _text(value: Any) -> str:
     return "" if value is None else str(value).strip()
@@ -226,7 +243,18 @@ def canonicalize_bronze_record(envelope: dict[str, Any], *, silver_updated_at: O
         "crawled_at": _text(payload.get("scraped_at") or observed_at), "observed_at": observed_at,
         "ingested_at": metadata_ingested_at, "silver_updated_at": silver_updated_at or observed_at, "is_active": is_active,
         "job_title": title, "job_title_normalized": normalize_title(title), "job_level": classify_job_level(payload.get("job_level") or payload.get("experience")),
-        "job_expertise": _as_string_scalar(payload.get("job_expertise")), "job_domain": _as_string_scalar(payload.get("job_domain") or payload.get("job_industry")),
+        "job_expertise": _as_string_scalar(payload.get("job_expertise")),
+        # job_domain must cover all nine platforms. Only itviec emits `job_domain` and only
+        # vietnamworks emits `job_industry`; the five card-style platforms expose `industries`,
+        # and the remaining ones only carry `company_industry`. Without this fallback chain the
+        # Gold market aggregate would group ~7/9 platforms into UNKNOWN.
+        "job_domain": _as_string_scalar(
+            payload.get("job_domain")
+            or payload.get("job_industry")
+            or payload.get("industries")
+            or payload.get("company_industry")
+            or payload.get("company_field")
+        ),
         "work_mode": _as_string_scalar(payload.get("work_mode")), "working_time": _as_string_scalar(payload.get("working_time") or payload.get("employment_type")), "overtime_policy": _as_string_scalar(payload.get("overtime_policy")),
         "company_name": clean_company_name(company), "company_name_raw": company, "company_name_normalized": clean_company_name(company), "company_size": _as_string_scalar(payload.get("company_size")),
         "company_industry": _as_string_scalar(payload.get("company_industry")), "company_type": _as_string_scalar(payload.get("company_type") or payload.get("contract_type")), "company_country": _as_string_scalar(payload.get("company_country")),

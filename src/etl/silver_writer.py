@@ -236,6 +236,27 @@ class SilverWriter:
         self._write_json_atomic(path, report)
         return str(path)
 
+    def write_release_manifest(self, release: dict[str, Any], release_id: str) -> dict[str, Any]:
+        """Seal one Silver release so Gold reads a fixed object set, never a day folder.
+
+        The release manifest is the contract Gold depends on: it names every effective
+        object with its checksum and record count, so a consumer can verify it read the
+        whole release and can prove which release a number came from.
+        """
+        release_dir = self.root / "releases"
+        release_dir.mkdir(parents=True, exist_ok=True)
+        path = release_dir / f"{release_id}.json"
+        self._write_json_atomic(path, release)
+        object_key = f"releases/{release_id}.json"
+        checksum = _sha256(path)
+        if self.minio_client is not None:
+            self._upload_minio(path, object_key, checksum)
+        return {
+            "release_manifest_path": str(path),
+            "release_object_key": object_key,
+            "release_manifest_sha256": checksum,
+        }
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
