@@ -238,7 +238,10 @@ def canonicalize_bronze_record(envelope: dict[str, Any], *, silver_updated_at: O
     payload = envelope.get("raw_payload") or {}
     platform = _text(payload.get("platform") or metadata.get("source")).casefold()
     source_job_id = _text(payload.get("job_id") or payload.get("source_job_id"))
-    observed_at = _text(metadata.get("observed_at") or payload.get("observed_at") or payload.get("scraped_at") or metadata.get("ingested_at"))
+    # Processing/ingestion time is not a stable observation timestamp.  Falling
+    # back to it would make a replay of the same Bronze object produce a new
+    # observation_id, so missing source observation time must fail closed.
+    observed_at = _text(metadata.get("observed_at") or payload.get("observed_at") or payload.get("scraped_at"))
     content_hash = _text(payload.get("content_hash"))
     if not platform or not source_job_id or not observed_at or not content_hash:
         raise ValueError("Bronze envelope lacks stable platform/source_job_id/observed_at/content_hash")

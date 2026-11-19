@@ -60,6 +60,22 @@ class SilverWriter:
         return f"{self.object_namespace}/{key}" if self.object_namespace else key
 
     @staticmethod
+    def _deduplicate_rows(dataset: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Collapse logical keys within one writer call before creating a file."""
+        key_fields = {
+            "observations": ("observation_id",),
+            "entities": ("unified_job_id",),
+            "entity_links": ("observation_id", "resolution_version"),
+            "quarantine": ("observation_id",),
+        }.get(dataset)
+        if not key_fields:
+            return rows
+        unique: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for row in rows:
+            unique[tuple(row.get(field) for field in key_fields)] = row
+        return [unique[key] for key in sorted(unique, key=lambda item: tuple(str(v) for v in item))]
+
+    @staticmethod
     def _identity_digest(dataset: str, rows: list[dict[str, Any]]) -> str:
         key_fields = {
             "observations": ("observation_id",),
@@ -151,7 +167,7 @@ class SilverWriter:
 
     def _write_batch(self, dataset: str, rows: list[dict[str, Any]], partition: str, batch_index: int) -> dict[str, Any]:
         schema = self._schema_for_partition(dataset, partition)
-        rows = self._rows_for_partition(dataset, rows, partition)
+        rows = self._deduplicate_rows(dataset, self._rows_for_partition(dataset, rows, partition))
         destination = self._dataset_path(dataset, partition)
         destination.mkdir(parents=True, exist_ok=True)
         identity_digest = self._identity_digest(dataset, [

@@ -94,7 +94,14 @@ def latest_release(root: str | Path, *, require_consumable: bool = True) -> Opti
         return None
     candidates.sort(key=lambda item: (item.snapshot_cutoff_at, item.release_id))
     if require_consumable:
-        consumable = [item for item in candidates if item.is_consumable]
+        # A COMPLETE flag is not sufficient: a crash/overwrite can leave the
+        # manifest sealed while one of its Parquet objects has changed. Gold
+        # must never select such a release and then discover corruption after
+        # the control run has started.
+        consumable = [
+            item for item in candidates
+            if item.is_consumable and (not item.objects or not verify_release(item, root))
+        ]
         return consumable[-1] if consumable else None
     return candidates[-1]
 
@@ -120,6 +127,13 @@ def verify_release(release: SilverRelease, root: str | Path) -> list[str]:
     if not release.objects:
         problems.append("release manifest lists no objects")
     root_path = Path(root)
+    logical_keys = {
+        "observations": ("observation_id",),
+        "entities": ("unified_job_id",),
+        "entity_links": ("observation_id", "resolution_version"),
+        "quarantine": ("observation_id",),
+    }
+    seen_keys: dict[str, set[tuple[str, ...]]] = {dataset: set() for dataset in logical_keys}
     for obj in release.objects:
         object_key = str(obj.get("object_key") or "")
         local = root_path / object_key
@@ -136,6 +150,18 @@ def verify_release(release: SilverRelease, root: str | Path) -> list[str]:
             continue
         if int(obj.get("records") or 0) != actual_rows:
             problems.append(f"record count mismatch: {object_key}")
+        dataset = str(obj.get("dataset") or "")
+        key_fields = logical_keys.get(dataset)
+        if key_fields:
+            try:
+                table = pq.read_table(local, columns=list(key_fields))
+                for row in table.to_pylist():
+                    key = tuple(str(row.get(field) or "") for field in key_fields)
+                    if key in seen_keys[dataset]:
+                        problems.append(f"duplicate logical key in release: {dataset}/{key}")
+                    seen_keys[dataset].add(key)
+            except Exception as exc:  # noqa: BLE001 - report, never crash the audit
+                problems.append(f"unreadable logical keys {object_key}: {exc}")
     return problems
 
 

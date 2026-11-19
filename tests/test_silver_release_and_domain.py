@@ -9,6 +9,7 @@ import pyarrow.parquet as pq
 from src.etl.bronze_to_silver import BronzeToSilverPipeline
 from src.etl.silver_writer import SilverWriter
 from src.etl.transformers import canonicalize_bronze_record, generate_observation_id, normalization_versions
+from src.gold.silver_release_reader import latest_release, load_release, read_dataset
 from src.storage.entity_registry import EntityRegistry
 from src.storage.metadata_envelope import MetadataEnvelope
 
@@ -57,6 +58,14 @@ class TestJobDomainCoverage(unittest.TestCase):
     def test_domain_none_when_no_source_field(self):
         record = canonicalize_bronze_record(_envelope("topcv", "4"))
         self.assertIsNone(record["job_domain"])
+
+    def test_missing_stable_observed_at_does_not_fallback_to_ingested_at(self):
+        envelope = _envelope("itviec", "missing-time")
+        envelope["_metadata"].pop("observed_at", None)
+        envelope["raw_payload"].pop("observed_at", None)
+        envelope["raw_payload"].pop("scraped_at", None)
+        with self.assertRaises(ValueError):
+            canonicalize_bronze_record(envelope)
 
 
 class TestNormalizationVersions(unittest.TestCase):
@@ -117,6 +126,56 @@ class TestSilverReleaseSealing(unittest.TestCase):
             _, report_b = self._run(tmp_b, [_envelope("itviec", "job-1")], run_id="same-run")
             self.assertEqual(report_a["manifest_fingerprint"], report_b["manifest_fingerprint"])
             self.assertEqual(report_a["silver_release_id"], report_b["silver_release_id"])
+
+    def test_release_does_not_duplicate_entity_across_object_batches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = _envelope("itviec", "job-dup", content_hash="hash-1", posted_date_iso="2026-11-16")
+            second = _envelope("itviec", "job-dup", content_hash="hash-2", posted_date_iso="2026-11-17")
+            second["raw_payload"]["scraped_at"] = "2026-11-17T01:00:00Z"
+            second["_metadata"]["observed_at"] = "2026-11-17T01:00:00Z"
+            second["_metadata"]["ingested_at"] = "2026-11-17T02:00:00Z"
+            second["_metadata"]["payload_checksum"] = MetadataEnvelope._compute_sha256(second["raw_payload"])
+
+            class Reader:
+                def list_active_bronze_objects(self, platform):
+                    return [{"object_key": "obj-1"}, {"object_key": "obj-2"}]
+
+            registry = EntityRegistry(str(Path(tmp) / "state.db"))
+            pipeline = BronzeToSilverPipeline(
+                registry=registry,
+                writer=SilverWriter(str(Path(tmp) / "silver")),
+                run_id="run-duplicate-entity",
+                pending_review_path=str(Path(tmp) / "pending_review.csv"),
+            )
+            report = pipeline.process_bronze_objects(
+                Reader(),
+                lambda key: iter([first] if key == "obj-1" else [second]),
+                platforms={"itviec"},
+            )
+            release = load_release(Path(tmp) / "silver", report["silver_release_id"])
+            rows = read_dataset(release, Path(tmp) / "silver", "entities")
+            ids = [row["unified_job_id"] for row in rows]
+            self.assertEqual(len(ids), len(set(ids)))
+
+    def test_latest_release_skips_newer_corrupt_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, report = self._run(tmp, [_envelope("itviec", "job-valid")], run_id="valid-run")
+            root = Path(tmp) / "silver"
+            valid_path = root / "releases" / f"{report['silver_release_id']}.json"
+            valid = json.loads(valid_path.read_text(encoding="utf-8"))
+            valid["snapshot_cutoff_at"] = "2026-11-16T02:00:00Z"
+            valid_path.write_text(json.dumps(valid, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            corrupt = json.loads(json.dumps(valid))
+            corrupt["silver_release_id"] = "silver_release_corrupt"
+            corrupt["run_id"] = "corrupt-run"
+            corrupt["snapshot_cutoff_at"] = "2026-11-17T02:00:00Z"
+            corrupt["objects"][0]["sha256"] = "0" * 64
+            (root / "releases" / "silver_release_corrupt.json").write_text(
+                json.dumps(corrupt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            selected = latest_release(root)
+            self.assertIsNotNone(selected)
+            self.assertEqual(selected.release_id, report["silver_release_id"])
 
     def test_primary_source_flags_the_canonical_observation(self):
         """GAP-5: is_primary_source marks the representative observation, not the entity creator.

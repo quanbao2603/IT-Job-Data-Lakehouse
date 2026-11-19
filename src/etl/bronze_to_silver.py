@@ -52,6 +52,10 @@ class BronzeToSilverPipeline:
         self.resolution_version = resolution_version
         self.max_records_per_batch = max_records_per_batch
         self._release_objects: list[dict[str, Any]] = []
+        # Entity rows are release-level state, not append-only observations. Keep
+        # the latest row per unified_job_id until all Bronze batches are read so
+        # one entity cannot be emitted into multiple Parquet files/partitions.
+        self._pending_entity_rows: dict[str, dict[str, Any]] = {}
         self.resolver = EntityResolver(
             registry,
             resolution_version=resolution_version,
@@ -156,7 +160,10 @@ class BronzeToSilverPipeline:
             "first_seen_at": entity["first_seen_at"],
             "last_seen_at": entity["last_seen_at"],
             "entity_status": entity["entity_status"],
-            "canonical_updated_at": entity["updated_at"],
+            # Registry mutation time is not replay-stable.  The canonical
+            # observation time is the deterministic business timestamp used
+            # for Silver lineage and release fingerprints.
+            "canonical_updated_at": canonical.get("observed_at") or entity["last_seen_at"],
             "resolution_version": entity["resolution_version"],
         }
         return entity_row, str(canonical.get("observation_id") or "")
@@ -167,6 +174,14 @@ class BronzeToSilverPipeline:
         for item in results:
             self._release_objects.append({**item, "dataset": dataset, "partition": partition})
         return results
+
+    def _write_entity_rows(self, rows: Iterable[dict[str, Any]]) -> None:
+        by_partition: dict[str, list[dict[str, Any]]] = {}
+        for entity in rows:
+            partition_timestamp = entity.get("canonical_posted_date") or entity["first_seen_at"]
+            by_partition.setdefault(self._partition(partition_timestamp), []).append(entity)
+        for partition, partition_rows in by_partition.items():
+            self._write_dataset("entities", partition_rows, partition)
 
     def seal_silver_release(
         self,
@@ -245,7 +260,10 @@ class BronzeToSilverPipeline:
             "match_method": result.match_method,
             "match_score": result.match_score,
             "match_status": result.match_status,
-            "matched_at": utc_now(),
+            # Matching is replayed from a fixed Bronze observation.  Use that
+            # stable timestamp rather than wall-clock processing time so the
+            # same input produces the same Parquet bytes and release fingerprint.
+            "matched_at": record.get("observed_at") or utc_now(),
             "matcher_version": self.resolution_version,
             "review_reason": result.review_reason,
             "previous_unified_job_id": None,
@@ -291,13 +309,13 @@ class BronzeToSilverPipeline:
                     )
                     batch.append(envelope)
                     if len(batch) >= self.max_records_per_batch:
-                        report = self.process(batch, partial_run=True)
+                        report = self.process(batch, partial_run=True, defer_entity_write=True)
                         aggregate.update(report["metrics"])
                         schema_drift_warnings.update(report.get("schema_drift_warnings", []))
                         last_report = report
                         batch = []
                 if batch:
-                    report = self.process(batch, partial_run=True)
+                    report = self.process(batch, partial_run=True, defer_entity_write=True)
                     aggregate.update(report["metrics"])
                     schema_drift_warnings.update(report.get("schema_drift_warnings", []))
                     last_report = report
@@ -314,6 +332,9 @@ class BronzeToSilverPipeline:
         last_report["schema_drift_warnings"] = sorted(schema_drift_warnings)
         last_report["failed_platforms"] = sorted(failed_platforms)
         last_report["coverage_warning"] = bool(failed_platforms)
+        self._write_entity_rows(self._pending_entity_rows.values())
+        last_report["metrics"]["canonical_entity_count"] = len(self._pending_entity_rows)
+        last_report["metrics"]["entity_link_count"] = aggregate.get("entity_link_count", 0)
         # The per-batch partial_run flag exists only to defer lifecycle closure while
         # Bronze objects are still streaming. It must not leak into the sealed release,
         # otherwise every release would look partial and Gold would reject all of them.
@@ -335,6 +356,7 @@ class BronzeToSilverPipeline:
         *,
         failed_platforms: Optional[set[str]] = None,
         partial_run: bool = False,
+        defer_entity_write: bool = False,
     ) -> dict[str, Any]:
         failed_platforms = failed_platforms or set()
         observations: list[dict[str, Any]] = []
@@ -474,13 +496,11 @@ class BronzeToSilverPipeline:
                 quality = validate_entity(entity)
                 if not quality.accepted:
                     raise ValueError(f"Silver entity rejected: {quality.quarantine_reason}")
-            by_partition = {}
-            for entity in entity_rows:
-                # Business partition: canonical posted date, with first-seen fallback.
-                partition_timestamp = entity.get("canonical_posted_date") or entity["first_seen_at"]
-                by_partition.setdefault(self._partition(partition_timestamp), []).append(entity)
-            for partition, rows in by_partition.items():
-                self._write_dataset("entities", rows, partition)
+            self._pending_entity_rows.update(
+                {str(entity["unified_job_id"]): entity for entity in entity_rows}
+            )
+            if not defer_entity_write:
+                self._write_entity_rows(entity_rows)
 
         # Keep every successful batch auditable and expose the explicit publish gate input.
         report_metrics: dict[str, Any] = dict(metrics)

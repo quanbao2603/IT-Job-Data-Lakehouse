@@ -3,18 +3,18 @@
 - **Dự án:** `IT-Job-Data-Lakehouse`
 - **Thời điểm kiểm tra:** 2026-11-19 (UTC+07)
 - **Phạm vi:** đối chiếu toàn bộ ba plan `bronze-design-stages.md`, `silver-design-stages.md`, `gold-design-stages.md` với code, tests và runtime production.
-- **Git baseline:** `main` tại `18ef8de` trước đợt rà soát; các sửa lỗi và báo cáo hiện nằm trong commit series sau baseline này.
+- **Git baseline:** `main` tại `18ef8de`; sau đợt rà soát đã phát hiện thêm các vấn đề Silver và đang xử lý trong commit series sau baseline này.
 - **An toàn:** không chạy lại DDL production, không chạy `mark_missing_day` chủ động, không reset State Store, không xóa Bronze/Silver, không in credentials/cookie/raw payload.
 
 ## 1. Kết luận ngắn
 
-Ba tầng **đã chạy được theo đường chính Bronze → Silver → Gold**, nhưng **chưa nên gọi là hoàn tất production-ready** vì còn các gap vận hành và một lỗi dữ liệu control đã được phát hiện trong quá trình kiểm tra.
+Ba tầng **đã chạy được theo đường chính Bronze → Silver → Gold**, nhưng **chưa đạt production acceptance**. Rà soát độc lập bổ sung phát hiện các release Silver cũ có checksum sai và duplicate canonical entity; Gold hiện không được phép chọn các release đó.
 
 ### Trạng thái hiện tại
 
 - **Bronze:** đường crawl, envelope, manifest, checksum, State Store, audit gate và Airflow hoạt động; runtime có 46 object Bronze, 5.376 records đăng ký, landing không còn `.uploading`. Tuy nhiên compaction chưa được lịch gọi, alert chưa bật, timeout code chưa khớp plan và runtime State Store còn 3 `ABANDONED`/9 `FAILED` lịch sử.
-- **Silver:** release thật `silver_release_manual_goldprep_d279d1a` ở `COMPLETE`, consumable, 456 objects trong manifest, verify checksum/row count **0 lỗi**, đủ 9 platform, 5.162 observation hợp lệ, quarantine rate 3,9807% dưới ngưỡng 5%. Phát hiện rủi ro writer: các run khác nhau trước đây có thể ghi đè cùng object key deterministic; đã thêm namespace theo `run_id` cho DAG và regression test.
-- **Gold:** production load thành công với 32 DQ check đạt, active release đang trỏ đúng release thành công. Blocked probe chứng minh `active_release` không đổi, nhưng probe trước đây đã ghi đè `gold_control.daily_snapshot` của cùng ngày thành `FAILED`. Đã sửa code để blocked/missing không ghi đè snapshot `LOADED` và đã reconciliate control row về release thành công, không reload dữ liệu.
+- **Silver:** release `silver_release_manual_goldprep_d279d1a` vẫn có `status=COMPLETE` nhưng **không còn consumable sau khi bổ sung kiểm tra logical-key uniqueness**: 3.652 entity rows nhưng chỉ 3.077 `unified_job_id` duy nhất. Release `manual_goldprep_20261119_v2` có thêm 387/428 checksum mismatch. Đã sửa code để run mới cô lập object theo `run_id`, defer entity write đến cấp release, fail-closed khi thiếu `observed_at`, bỏ release hỏng/duplicate khỏi Gold selection và thêm regression tests. Chưa chạy lại Silver production vì chưa có xác nhận cho phép reprocess.
+- **Gold:** production load trước đó thành công với 32 DQ check đạt, active release vẫn trỏ đúng release đã load. Tuy nhiên sau khi reader được siết integrity/uniqueness, runtime hiện không chọn release Silver cũ làm consumable; vì vậy không được chạy Gold mới cho tới khi có Silver release sạch. Blocked probe chứng minh `active_release` không đổi, nhưng probe trước đây đã ghi đè `daily_snapshot`; code và control row đã được sửa.
 
 ## 2. Bằng chứng runtime đã thu được
 
@@ -35,8 +35,8 @@ Ba tầng **đã chạy được theo đường chính Bronze → Silver → Gol
 ### Silver
 
 - Release: `silver_release_manual_goldprep_d279d1a`.
-- `status=COMPLETE`, `is_consumable=True`.
-- 456 objects trong manifest, verify checksum và Parquet row count: 0 lỗi.
+- Manifest flag vẫn là `status=COMPLETE`, nhưng code reader mới trả `is_consumable=False` vì logical-key duplicates; không được chọn cho Gold cho tới khi reprocess tạo release sạch.
+- 456 objects trong manifest, checksum/row count vật lý cũ từng verify 0 lỗi; kiểm tra logical key mới phát hiện duplicate entities.
 - 9 platform: `careerviet`, `devwork`, `itviec`, `topcv`, `topdev`, `upzi`, `vieclam24h`, `vietnamdevs`, `vietnamworks`.
 - Manifest metrics: 5.376 observations xử lý, 5.162 valid, 214 quarantine, quarantine rate 3,9807%, 1.076 review-required links.
 - Object MinIO Silver tồn tại và đã được đọc kiểm tra thông qua release mirror/local mirror.
@@ -84,6 +84,17 @@ Ba tầng **đã chạy được theo đường chính Bronze → Silver → Gol
 - Thêm regression tests cho blocked và missing snapshot.
 - Đã đọc lại active/load state và reconciliate duy nhất control row bị lệch về release thành công; không chạy lại DDL/`mark_missing_day`, không reload Gold.
 
+### 3.3. Silver release integrity và entity uniqueness — P0
+
+Rà soát độc lập bằng release manifest + Parquet readback đã xác nhận:
+
+- `silver_release_manual_goldprep_20261119_v2`: 428 objects, 387 checksum mismatch, nhưng manifest cũ vẫn ghi `COMPLETE`.
+- `silver_release_manual_goldprep_d279d1a`: `entities` 3.652 rows / 3.077 unique `unified_job_id`.
+
+Nguyên nhân là writer chỉ dedupe trong một lần gọi `write()`; pipeline phát entity theo nhiều batch/partition nên cùng entity xuất hiện ở nhiều file. Đã sửa theo hướng defer entity write tới cuối release và kiểm tra duplicate logical key khi Gold verify release. Các release cũ không được tự ý rewrite/xóa.
+
+Do đây là dữ liệu production cần ghi thêm release/object mới, em đã dừng ở code + test và chờ xác nhận reprocess; không tự chạy lại Silver production.
+
 ## 4. Ma trận đánh giá theo tầng
 
 ### 4.1. Bronze
@@ -122,7 +133,7 @@ Ba tầng **đã chạy được theo đường chính Bronze → Silver → Gol
 | Hạng mục | Đánh giá | Mức |
 |---|---|---|
 | PostgreSQL control/schema | Đã chạy production | Đạt |
-| Release reader/checksum/row count | Active Silver release verify 0 lỗi | Đạt |
+- Release reader/checksum/row count | Đã siết fail-closed; release cũ bị loại vì duplicate logical keys | **P0 đang mở** |
 | Dimensions/SCD2/facts | Active load SUCCESS, FK lỗi trước đây đã sửa | Đạt |
 | DQ/publish gate | 32/32 checks pass active release | Đạt |
 | Active release atomicity | Blocked probe giữ pointer cũ | Đạt sau sửa |
@@ -151,9 +162,9 @@ Ba tầng **đã chạy được theo đường chính Bronze → Silver → Gol
 5. Sinh acceptance fixture thật cho `MERGED`/`SPLIT` hoặc ghi rõ đây là scenario phòng vệ chưa thể nghiệm thu bằng dữ liệu production.
 6. Có quy trình cookie/session refresh; hiện 403 sẽ fail-closed nhưng không tự khôi phục.
 
-### Không phát hiện P0
+### P0 đang mở
 
-Không phát hiện lỗi làm mất dữ liệu Bronze, expose release Gold sai active pointer, hoặc cho phép publish Gold khi DQ BLOCK trong lần audit này. Các lỗi P1 nêu trên vẫn đủ để không gọi hệ thống là fully operational/zero-touch.
+Đã phát hiện lỗi Silver release integrity/uniqueness nêu ở mục 3.3. Lỗi này không làm mất Bronze và không làm active Gold pointer sai, nhưng chặn production acceptance của Silver/Gold handoff cho tới khi reprocess tạo release mới sạch.
 
 ## 6. Vấn đề tài liệu cần chỉnh
 
@@ -172,7 +183,7 @@ Bản báo cáo này là addendum hiện trạng; không sửa lịch sử trong
   - blocked snapshot không overwrite `LOADED`: pass.
   - missing snapshot không overwrite `LOADED`: pass.
   - Silver run namespace ngăn object overwrite: pass.
-- Full suite: **289 tests, OK (skipped=2)**.
+- Full suite sau các sửa mới: **292 tests, OK (skipped=2)**.
 - `py_compile` toàn bộ `src/etl`, `src/storage`, `src/utils`, `src/gold`, `dags`: pass.
 - `bash -n infrastructure/postgres/create_gold_db.sh`: pass.
 - `git diff --check`: pass tại thời điểm tạo báo cáo.
@@ -180,7 +191,7 @@ Bản báo cáo này là addendum hiện trạng; không sửa lịch sử trong
 
 ## 8. Phạm vi chưa thể khẳng định
 
-- Chưa chạy full crawl mới chỉ để audit, vì đó là side effect không cần thiết và có thể thay đổi watermark/source state.
+- Chưa chạy lại Silver production/reprocess release vì đây là side effect ghi thêm object/manifest và cập nhật registry; đã hỏi xác nhận nhưng chưa nhận được lựa chọn.
 - Chưa bật alert thật vì cần secret/channel approval; không đoán credential.
 - Chưa chạy compaction production vì là thao tác thay đổi object lifecycle.
 - Chưa chạy lại DDL production hoặc `mark_missing_day`, theo yêu cầu đã chốt.
