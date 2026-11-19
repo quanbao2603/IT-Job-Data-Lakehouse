@@ -70,6 +70,17 @@ class TestSilverWriter(unittest.TestCase):
             second_paths = {item["object_key"] for item in second.write("observations", list(reversed(rows)), "partition")}
             self.assertEqual(first_paths, second_paths)
 
+    def test_run_namespace_prevents_cross_release_object_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = SilverWriter(tmp, object_namespace="run-a")
+            second = SilverWriter(tmp, object_namespace="run-b")
+            row = self._observation("obs-isolated")
+            first_key = first.write("observations", [row], "partition")[0]["object_key"]
+            second_key = second.write("observations", [row], "partition")[0]["object_key"]
+            self.assertNotEqual(first_key, second_key)
+            self.assertTrue(first_key.startswith("run-a/"))
+            self.assertTrue(second_key.startswith("run-b/"))
+
     def test_idempotency_key_is_required(self):
         with tempfile.TemporaryDirectory() as tmp:
             writer = SilverWriter(tmp)

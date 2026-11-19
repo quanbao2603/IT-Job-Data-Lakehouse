@@ -38,14 +38,26 @@ class SilverWriter:
         *,
         minio_client: Any = None,
         bucket: str = "silver",
+        object_namespace: Optional[str] = None,
     ) -> None:
         self.root = Path(root)
         self.max_records_per_batch = max_records_per_batch
         self.minio_client = minio_client
         self.bucket = bucket
+        self.object_namespace = str(object_namespace or "").strip("/")
 
     def _manifest_path(self, dataset: str, partition: str, identity_digest: str) -> Path:
-        return self.root / dataset / partition / f"manifest-{identity_digest}.json"
+        return self._dataset_path(dataset, partition) / f"manifest-{identity_digest}.json"
+
+    def _dataset_path(self, dataset: str, partition: str) -> Path:
+        """Return an isolated local path for one run's dataset partition."""
+        if self.object_namespace:
+            return self.root / self.object_namespace / dataset / partition
+        return self.root / dataset / partition
+
+    def _object_key(self, dataset: str, partition: str, filename: str) -> str:
+        key = f"{dataset}/{partition}/{filename}"
+        return f"{self.object_namespace}/{key}" if self.object_namespace else key
 
     @staticmethod
     def _identity_digest(dataset: str, rows: list[dict[str, Any]]) -> str:
@@ -124,7 +136,8 @@ class SilverWriter:
     def _upload_manifest(self, manifest_path: Path, dataset: str, partition: str, identity_digest: str) -> None:
         if self.minio_client is None:
             return
-        key = f"audit_logs/manifests/{dataset}/{partition}/manifest-{identity_digest}.json"
+        namespace = f"{self.object_namespace}/" if self.object_namespace else ""
+        key = f"audit_logs/manifests/{namespace}{dataset}/{partition}/manifest-{identity_digest}.json"
         checksum = _sha256(manifest_path)
         with manifest_path.open("rb") as stream:
             self.minio_client.put_object(
@@ -139,7 +152,7 @@ class SilverWriter:
     def _write_batch(self, dataset: str, rows: list[dict[str, Any]], partition: str, batch_index: int) -> dict[str, Any]:
         schema = self._schema_for_partition(dataset, partition)
         rows = self._rows_for_partition(dataset, rows, partition)
-        destination = self.root / dataset / partition
+        destination = self._dataset_path(dataset, partition)
         destination.mkdir(parents=True, exist_ok=True)
         identity_digest = self._identity_digest(dataset, [
             {k: v for k, v in row.items() if k not in {"year", "month", "day"}} for row in rows
@@ -148,7 +161,7 @@ class SilverWriter:
         filename = f"part-{identity_digest}-{digest}.parquet"
         final_path = destination / filename
         manifest_path = self._manifest_path(dataset, partition, identity_digest)
-        object_key = f"{dataset}/{partition}/{filename}"
+        object_key = self._object_key(dataset, partition, filename)
         pending = {
             "status": "PENDING",
             "dataset": dataset,

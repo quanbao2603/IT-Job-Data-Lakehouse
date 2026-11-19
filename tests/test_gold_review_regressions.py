@@ -8,7 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.gold.load_facts import build_change_events
-from src.gold.release_controller import load_bundle
+from src.gold.release_controller import load_bundle, mark_missing_day, record_blocked_snapshot
 from src.gold.silver_release_reader import (
     SilverRelease,
     build_effective_link,
@@ -17,6 +17,73 @@ from src.gold.silver_release_reader import (
 
 
 class TestGoldReviewRegressions(unittest.TestCase):
+    def test_blocked_snapshot_does_not_overwrite_loaded_day(self):
+        class Cursor:
+            def __init__(self):
+                self.statement = ""
+                self.params = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def execute(self, statement, params=None):
+                self.statement = statement
+                self.params = params
+
+        class Connection:
+            def __init__(self):
+                self.cursor_instance = Cursor()
+
+            def cursor(self):
+                return self.cursor_instance
+
+            def commit(self):
+                pass
+
+        connection = Connection()
+        record_blocked_snapshot(
+            connection,
+            snapshot_date="2026-11-19",
+            gold_release_id="gold-blocked",
+            silver_release_id="silver-blocked",
+            notes="DQ-01",
+        )
+        self.assertIn("daily_snapshot.status <> 'LOADED'", connection.cursor_instance.statement)
+        self.assertIn("WHERE gold_control.daily_snapshot.status <> 'LOADED'", connection.cursor_instance.statement)
+
+    def test_missing_day_does_not_overwrite_loaded_day(self):
+        class Cursor:
+            def __init__(self):
+                self.statement = ""
+                self.params = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def execute(self, statement, params=None):
+                self.statement = statement
+                self.params = params
+
+        class Connection:
+            def __init__(self):
+                self.cursor_instance = Cursor()
+
+            def cursor(self):
+                return self.cursor_instance
+
+            def commit(self):
+                pass
+
+        connection = Connection()
+        mark_missing_day(connection, "2026-11-19", notes="no consumable Silver release")
+        self.assertIn("WHERE gold_control.daily_snapshot.status <> 'LOADED'", connection.cursor_instance.statement)
+
     def test_load_bundle_deletes_dependent_facts_before_snapshot(self):
         class Cursor:
             def __init__(self):

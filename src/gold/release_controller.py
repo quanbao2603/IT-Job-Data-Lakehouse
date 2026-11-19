@@ -322,6 +322,34 @@ def record_load_run(connection: Any, bundle: Any, status: str, row_counts: dict[
     connection.commit()
 
 
+def record_blocked_snapshot(
+    connection: Any,
+    *,
+    snapshot_date: Any,
+    gold_release_id: str,
+    silver_release_id: str,
+    notes: str,
+) -> None:
+    """Record a blocked attempt without hiding an already loaded day.
+
+    A failed retry for the same business date must not replace the successful
+    release pointer in ``daily_snapshot``. If no loaded row exists, the failure
+    remains visible as ``FAILED`` for operations.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO gold_control.daily_snapshot (snapshot_date, gold_release_id, "
+            "silver_release_id, status, notes) VALUES (%s, %s, %s, 'FAILED', %s) "
+            "ON CONFLICT (snapshot_date) DO UPDATE SET "
+            "gold_release_id=EXCLUDED.gold_release_id, "
+            "silver_release_id=EXCLUDED.silver_release_id, "
+            "status='FAILED', notes=EXCLUDED.notes "
+            "WHERE gold_control.daily_snapshot.status <> 'LOADED'",
+            (snapshot_date, gold_release_id, silver_release_id, notes),
+        )
+    connection.commit()
+
+
 def publish(connection: Any, bundle: Any, results: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Flip the BI pointer, but only for a release that passed every BLOCK check.
 
@@ -334,16 +362,13 @@ def publish(connection: Any, bundle: Any, results: Iterable[dict[str, Any]]) -> 
     if not summary["publish_allowed"]:
         record_load_run(connection, bundle, "FAILED", bundle.row_counts(), bundle.cutoff_at,
                         error_message="; ".join(row["check_code"] for row in failures))
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO gold_control.daily_snapshot (snapshot_date, gold_release_id, "
-                "silver_release_id, status, notes) VALUES (%s, %s, %s, 'FAILED', %s) "
-                "ON CONFLICT (snapshot_date) DO UPDATE SET gold_release_id=EXCLUDED.gold_release_id, "
-                "silver_release_id=EXCLUDED.silver_release_id, status='FAILED', notes=EXCLUDED.notes",
-                (bundle.snapshot_date, bundle.gold_release_id, bundle.silver_release_id,
-                 "; ".join(row["check_code"] for row in failures)),
-            )
-        connection.commit()
+        record_blocked_snapshot(
+            connection,
+            snapshot_date=bundle.snapshot_date,
+            gold_release_id=bundle.gold_release_id,
+            silver_release_id=bundle.silver_release_id,
+            notes="; ".join(row["check_code"] for row in failures),
+        )
         return {"status": "BLOCKED", "summary": summary,
                 "blocking_checks": [row["check_code"] for row in failures]}
 
@@ -396,7 +421,8 @@ def mark_missing_day(connection: Any, snapshot_date: Any, notes: str = "") -> No
         cursor.execute(
             "INSERT INTO gold_control.daily_snapshot (snapshot_date, status, notes) "
             "VALUES (%s, 'MISSING', %s) "
-            "ON CONFLICT (snapshot_date) DO UPDATE SET status='MISSING', notes=EXCLUDED.notes",
+            "ON CONFLICT (snapshot_date) DO UPDATE SET status='MISSING', notes=EXCLUDED.notes "
+            "WHERE gold_control.daily_snapshot.status <> 'LOADED'",
             (snapshot_date, notes),
         )
     connection.commit()

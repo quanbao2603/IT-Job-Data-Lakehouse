@@ -197,6 +197,7 @@ def _run_silver(**context: Any) -> Dict[str, Any]:
             max_records_per_batch=int(os.environ.get("LAKEHOUSE_SILVER_MAX_RECORDS_PER_BATCH", "5000")),
             minio_client=silver_client,
             bucket=silver_bucket,
+            object_namespace=run_id,
         ),
         run_id=run_id,
         resolution_version=os.environ.get("LAKEHOUSE_SILVER_RESOLUTION_VERSION", "v1"),

@@ -1,8 +1,8 @@
 # IT-Job-Data-Lakehouse
 
-Hệ thống Data Lakehouse thu thập dữ liệu thị trường việc làm IT từ ITviec, TopCV, TopDev và VietnamWorks, sau đó ghi dữ liệu vào tầng Bronze trên MinIO/S3.
+Hệ thống Data Lakehouse thu thập dữ liệu thị trường việc làm IT từ chín nền tảng, ghi extracted observations vào Bronze trên MinIO/S3, chuẩn hóa và resolution ở Silver, rồi publish release Gold vào PostgreSQL.
 
-> Phạm vi repository hiện tại tập trung vào crawler, storage và Bronze ingestion. Silver/Gold chưa nằm trong source snapshot này.
+> Phạm vi repository gồm Bronze ingestion, Silver release pipeline và Gold mart. Runtime production/evidence mới nhất được tổng hợp trong `docs/three-layer-audit-2026-11-19.md`; các tài liệu design stages vẫn giữ lịch sử quyết định và baseline triển khai.
 
 ## Kiến trúc hiện tại
 
@@ -25,6 +25,7 @@ Các thành phần chính:
 - `infrastructure/docker-compose.yml`: MinIO chạy nội bộ trên VPS.
 - `docs/bronze-architecture-review.md`: review kiến trúc và bằng chứng kiểm tra Bronze.
 - `docs/architecture-handoff-ai.md`: bản quét cấu trúc, data-flow và architecture handoff cho AI khác.
+- `docs/three-layer-audit-2026-11-19.md`: rà soát hiện trạng Bronze–Silver–Gold, bằng chứng runtime, lỗi đã sửa và gap còn lại.
 
 Payload Bronze hiện là **extracted observation payload** theo từng crawl run. Cookie/session, `.env`, SQLite runtime, MinIO objects, log và virtualenv không thuộc Git repository.
 
