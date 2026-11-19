@@ -103,6 +103,26 @@ def send_alert(message: str, *, context: Optional[Dict[str, Any]] = None) -> boo
         return 200 <= response.status < 300
 
 
+def alert_configuration_status() -> Dict[str, Any]:
+    """Return non-secret alert readiness for preflight and operator reports."""
+    enabled = os.getenv("ALERT_ENABLED", "false").lower() == "true"
+    if not enabled:
+        return {"enabled": False, "ready": False, "reason": "ALERT_ENABLED=false"}
+    channel = os.getenv("ALERT_CHANNEL", "telegram").lower()
+    if channel == "telegram":
+        ready = bool(os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"))
+    elif channel == "discord":
+        ready = bool(os.getenv("DISCORD_WEBHOOK_URL"))
+    else:
+        ready = False
+    return {
+        "enabled": True,
+        "ready": ready,
+        "channel": channel,
+        "reason": None if ready else "missing alert channel configuration",
+    }
+
+
 def airflow_retry_callback(context: Dict[str, Any]) -> None:
     """Emit one redacted operational event for a bounded Airflow retry."""
     dag_run = context.get("dag_run")

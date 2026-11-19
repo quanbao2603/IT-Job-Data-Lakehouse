@@ -95,6 +95,17 @@ class EntityRegistry:
                     PRIMARY KEY (observation_id, resolution_version),
                     FOREIGN KEY (unified_job_id) REFERENCES entity_registry(unified_job_id)
                 );
+                CREATE TABLE IF NOT EXISTS silver_review_decisions (
+                    observation_id TEXT NOT NULL,
+                    resolution_version TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    reviewer TEXT NOT NULL,
+                    candidate_entity_id TEXT,
+                    note TEXT,
+                    decided_at TEXT NOT NULL,
+                    PRIMARY KEY (observation_id, resolution_version),
+                    FOREIGN KEY (observation_id) REFERENCES silver_observation_registry(observation_id)
+                );
                 CREATE INDEX IF NOT EXISTS idx_silver_obs_url
                     ON silver_observation_registry(platform, source_job_id);
             """)
@@ -302,6 +313,77 @@ class EntityRegistry:
                 "SELECT * FROM silver_entity_links WHERE observation_id = ? AND resolution_version = ?",
                 (observation_id, resolution_version),
             ).fetchone()
+
+    def list_pending_reviews(self) -> list[sqlite3.Row]:
+        """Return unresolved review links for the durable operator queue."""
+        with closing(self._connect()) as conn:
+            return conn.execute(
+                """SELECT l.observation_id, o.platform, o.source_job_id,
+                          l.candidate_entity_id, l.match_score, l.match_status,
+                          l.review_reason, l.resolution_version
+                   FROM silver_entity_links l
+                   JOIN silver_observation_registry o ON o.observation_id = l.observation_id
+                  WHERE l.match_status = 'REVIEW_REQUIRED'
+                  ORDER BY l.matched_at, l.observation_id"""
+            ).fetchall()
+
+    def resolve_review(
+        self,
+        *,
+        observation_id: str,
+        resolution_version: str,
+        decision: str,
+        reviewer: str,
+        candidate_entity_id: Optional[str] = None,
+        note: str = "",
+    ) -> dict[str, Optional[str]]:
+        """Atomically apply a human review decision and record its audit row."""
+        decision = str(decision).strip().upper()
+        if decision not in {"ACCEPT", "REJECT"}:
+            raise ValueError("review decision must be ACCEPT or REJECT")
+        if not str(reviewer).strip():
+            raise ValueError("reviewer is required")
+        now = utc_now()
+        with self.transaction() as conn:
+            link = conn.execute(
+                "SELECT * FROM silver_entity_links WHERE observation_id = ? AND resolution_version = ?",
+                (observation_id, resolution_version),
+            ).fetchone()
+            if link is None:
+                raise KeyError(f"Review link not found: {observation_id}/{resolution_version}")
+            if link["match_status"] != "REVIEW_REQUIRED":
+                raise ValueError(f"Review link is already resolved: {link['match_status']}")
+            target = candidate_entity_id or link["candidate_entity_id"]
+            if decision == "ACCEPT":
+                if not target:
+                    raise ValueError("ACCEPT requires candidate_entity_id")
+                if conn.execute("SELECT 1 FROM entity_registry WHERE unified_job_id = ?", (target,)).fetchone() is None:
+                    raise KeyError(f"Candidate entity not found: {target}")
+                status, unified_id = "MANUAL_MATCH", target
+            else:
+                status, unified_id = "UNMATCHED", None
+            conn.execute(
+                "UPDATE silver_observation_registry SET unified_job_id = ? WHERE observation_id = ?",
+                (unified_id, observation_id),
+            )
+            conn.execute(
+                """UPDATE silver_entity_links
+                      SET unified_job_id = ?, candidate_entity_id = ?, match_status = ?, review_reason = ?
+                    WHERE observation_id = ? AND resolution_version = ?""",
+                (unified_id, target, status, note or link["review_reason"], observation_id, resolution_version),
+            )
+            conn.execute(
+                """INSERT INTO silver_review_decisions
+                    (observation_id, resolution_version, decision, reviewer, candidate_entity_id, note, decided_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(observation_id, resolution_version) DO UPDATE SET
+                     decision=excluded.decision, reviewer=excluded.reviewer,
+                     candidate_entity_id=excluded.candidate_entity_id, note=excluded.note,
+                     decided_at=excluded.decided_at""",
+                (observation_id, resolution_version, decision, reviewer, target, note, now),
+            )
+        return {"status": "RESOLVED", "decision": decision, "observation_id": observation_id,
+                "resolution_version": resolution_version, "unified_job_id": unified_id}
 
     def list_links(self, observation_id: str) -> list[sqlite3.Row]:
         with closing(self._connect()) as conn:

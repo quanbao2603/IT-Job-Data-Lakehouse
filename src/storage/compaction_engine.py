@@ -22,7 +22,8 @@ class CompactionEngine:
         access_key: Optional[str] = None,
         secret_key: Optional[str] = None,
         secure: Optional[bool] = None,
-        bronze_bucket: Optional[str] = None
+        bronze_bucket: Optional[str] = None,
+        state_db_path: Optional[str] = None,
     ):
         load_env_file()
         self.endpoint = endpoint or os.getenv("MINIO_ENDPOINT", "localhost:9000")
@@ -52,7 +53,7 @@ class CompactionEngine:
             secure=self.secure,
             bronze_bucket=self.bronze_bucket
         )
-        self.state_manager = StateManager()
+        self.state_manager = StateManager(state_db_path or os.getenv("LAKEHOUSE_STATE_DB_PATH", "data/state_store.db"))
 
     def compact_partition(
         self,
