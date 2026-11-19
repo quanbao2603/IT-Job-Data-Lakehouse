@@ -1,13 +1,53 @@
 # Thiết Kế Chi Tiết Kiến Trúc Tầng Đồng (Bronze Layer) — IT Job Data Lakehouse
 
 > **Dự án:** IT Job Data Lakehouse
-> **Phiên bản tài liệu:** 1.0 — 19/11/2026
+> **Phiên bản tài liệu:** 1.1 — 19/11/2026
 > **Phạm vi:** 9 nền tảng tuyển dụng IT (`careerviet`, `upzi`, `vietnamdevs`, `vieclam24h`, `devwork`, `itviec`, `topcv`, `topdev`, `vietnamworks`).
 > **Vai trò tầng:** Thu thập và cam kết bất biến (immutable commit) các extracted observation thô, có kiểm chứng toàn vẹn và sổ cái đối soát.
 > **Đầu ra cho tầng kế tiếp:** `s3://bronze/{source}/ingest_year=.../part_{run_id}.jsonl.gz` + manifest `ingestion_objects` + audit gate PASS.
 > **Nguyên tắc cốt lõi:** *"Bronze không suy diễn. Bronze chỉ cam kết những gì đã nhìn thấy, đã băm, đã kiểm chứng kích thước và đã ghi sổ. Không có tệp rỗng, không có watermark đi trước manifest, không có pipeline chết âm thầm."*
-> **Tài liệu anh em:** `docs/silver-design-stages.md` (v3.0), `docs/gold-design-stages.md` (v5.0), `docs/hermes-gold-review-brief.md`.
-> **Cơ sở bằng chứng:** mọi số liệu trong file này đọc từ code tại HEAD `d279d1a`, không từ tài liệu thiết kế gốc.
+> **Tài liệu anh em:** `docs/silver-design-stages.md` (v3.0), `docs/gold-design-stages.md` (v5.0), `docs/hermes-gold-review-brief.md`, và `docs/bronze-design-review-stages-1-5.md` (Hermes phản biện bản Notion gốc, chỉ Giai đoạn 1–5).
+> **Cơ sở bằng chứng:** mọi số liệu trong file này đọc từ code tại HEAD `d4a003c`, không từ tài liệu thiết kế gốc. Kiểm thử nền: **97 test pass** (38 Gold + 59 Silver/Bronze/DAG), `compileall` sạch.
+
+### Quan hệ với `docs/bronze-design-review-stages-1-5.md`
+
+Hai tài liệu này **bổ trợ nhau, không thay thế nhau**, và cần dùng đúng vai:
+
+| Tài liệu | Vai trò | Phạm vi |
+|---|---|---|
+| `bronze-design-review-stages-1-5.md` (Hermes) | **Phản biện** ngôn ngữ và cơ chế trong bản thiết kế Notion gốc | Chỉ Giai đoạn 1–5; Giai đoạn 6 **chưa đánh giá** theo yêu cầu |
+| `bronze-design-stages.md` (file này) | **Mô tả hiện trạng code** + khoảng trống vận hành + hợp đồng bàn giao | Đủ 11 giai đoạn, gồm cả orchestration, alerting và pre-flight |
+
+Kết luận của Hermes mà file này **chấp nhận và đã áp dụng**: không được dùng các từ tuyệt đối. Chi tiết ở mục dưới.
+
+### Ngôn từ phải dùng đúng (điểm Hermes phê bình là đúng)
+
+```text
+"bất biến" (immutable)      → đúng nghĩa là immutable-by-convention: không có
+                               API nào trong pipeline xóa hoặc sửa object bronze.
+                               ĐÂY KHÔNG PHẢI WORM. MinIO ở đây không bật
+                               object lock hay retention lock.
+
+"nguyên tử" (atomic commit) → đúng nghĩa là giao thức 6 bước có kiểm chứng
+                               + thứ tự manifest-before-watermark.
+                               KHÔNG phải distributed transaction giữa MinIO
+                               và SQLite; hai hệ này không chung transaction.
+
+"zero-loss"                  → đúng nghĩa là: watermark không tiến nếu manifest
+                               chưa ghi, và tệp đã lên MinIO nhưng chưa vào manifest
+                               được thu hồi bằng backfill_manifest.py.
+                               KHÔNG có bằng chứng tuyệt đối không mất dữ liệu.
+
+"O(1) RAM" / "streaming end-to-end" → đúng cho tầng writer (chunk 65536 byte,
+                               generator). Ở tầng crawler, RAM vẫn bị chiếm theo
+                               `max_pages` và theo nội dung trang đang giữ,
+                               nên chỉ nói "bounded theo max_pages" là chính xác.
+
+"raw data"                   → KHÔNG đúng cho Bronze. Bronze lưu extracted payload
+                               đã qua parser/API, không phải byte HTTP hoặc HTML thô.
+                               Vì vậy tên trường giữ `raw_payload` chỉ để tương thích
+                               ngược, và mọi báo cáo phải gọi là extracted observation.
+```
 
 ---
 
