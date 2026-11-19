@@ -1,8 +1,9 @@
 # Briefing Review Tầng Gold — gửi Hermes
 
-> **Mục đích:** tài liệu này đi kèm `docs/gold-design-stages.md` (v4.0). Đọc thiết kế để hiểu *tại sao*, đọc file này để biết *review cái gì, theo thứ tự nào, và không được phá cái gì*.
-> **Trạng thái repo khi viết:** `main` = `08b9eb8`, gồm cả commit Silver của Hermes và toàn bộ tầng Gold.
-> **Kiểm thử:** 88 test pass, 2 skipped. `compileall` sạch.
+> **Mục đích:** tài liệu này đi kèm `docs/gold-design-stages.md` (v5.0). Đọc thiết kế để hiểu *tại sao*, đọc file này để biết *review cái gì, theo thứ tự nào, và không được phá cái gì*.
+> **Trạng thái repo khi cập nhật:** `main` = `2c25a22`, gồm 3 commit hardening Gold của Hermes viết sau bản brief đầu.
+> **Kiểm thử:** 92 test pass (34 Gold + 58 Silver/DAG), 2 skipped. `compileall` sạch.
+> **Bản cập nhật 19/11/2026:** DDL và semantic views đã chạy trên PostgreSQL production (mục 2). Hermes đã đóng 5.1 và 5.4. Thêm bốn rủi ro mới 5.13 đến 5.16.
 > **Người viết:** agent triển khai Gold (không phải Hermes). Mọi nhận định dưới đây đều kèm bằng chứng để Hermes tự kiểm chứng, không yêu cầu tin tưởng.
 
 ---
@@ -21,23 +22,51 @@ fa31f59  fix: pace TopCV requests with cooldowns             (Hermes)
 08b7d59  feat: add Gold mart on PostgreSQL                   (agent)
 ebeb19f  fix: read Gold enable flag from Airflow env file    (agent)
 08b9eb8  feat: preserve Bronze lineage in Silver metadata    (Hermes)
+92e386f  fix: harden Gold runtime and release review         (Hermes)
+a8749dd  docs: clarify Gold validation evidence              (Hermes)
+2c25a22  docs: update Gold review test evidence              (Hermes)
 ```
+
+`92e386f` là commit Hermes trả lời brief này: thêm `load_historical_release_data()`
+(đóng mục 5.1), `_resolution_version_key()` (đóng mục 5.4), `create_gold_db.sh`,
+`docs/powerbi-gold-connection.md`, `docs/gold-review-evidence.md` và 4 test regression.
+Cách sửa 5.1 mở ra hai rủi ro mới — xem 5.13 và 5.14.
 
 Hai bên đã sửa chồng lên cùng khu vực `src/etl/` nhưng **không xung đột**: commit `08b9eb8` của Hermes là bổ sung thuần túy (thêm `build_bronze_metadata()`), không đụng `seal_silver_release()`, cờ `partial_run`, chuỗi fallback `job_domain`, `is_primary_source` hay các hằng số version.
 
 ---
 
-## 2. Việc phải làm ĐẦU TIÊN: chạy SQL trên PostgreSQL thật
+## 2. Trạng thái kiểm chứng SQL: production DB ĐÃ chạy, còn 3 hàm
 
-**Đây là khoảng trống kiểm chứng lớn nhất và duy nhất.**
+**Cập nhật 19/11/2026:** operator đã chạy `create_gold_db.sh` rồi `apply_ddl` +
+`apply_semantic_views` trên database `lakehouse` THẬT của VPS. Kết quả đo được:
 
 ```text
-ĐÃ kiểm chứng:  toàn bộ luật nghiệp vụ (hàm thuần), 88 test.
-CHƯA kiểm chứng: apply_ddl(), apply_semantic_views(), load_bundle(),
-                 publish(), record_dq(), mark_missing_day().
+ddl_statements   = 36   (3 schema + 20 CREATE TABLE + 13 index)
+view_statements  = 10
+gold schema      = 12 BASE TABLE + 10 VIEW  (information_schema báo 22 vì gộp view)
+gold_control     = 4 bảng          gold_staging = 4 bảng
+pg_encoding      = UTF8  (điều kiện để CHECK chứa tiếng Việt khớp)
+constraint chk_  = 19    (đúng 19 constraint khai trong ddl.sql)
+run_gold_mart --no-publish → status MISSING, exit=1
+gold_control.daily_snapshot có dòng MISSING → mark_missing_day() ĐÃ chạy trên DB thật
 ```
 
-Ba mươi test Gold chạy **không có PostgreSQL**. Chúng kiểm chứng logic thuần và kiểm tra tĩnh script SQL (đếm đủ 20 bảng, 10 view, không fragment comment, constraint mã hóa đúng quyết định). Nhưng **chưa một câu SQL nào được thực thi chống lại database sống**.
+Như vậy `apply_ddl`, `apply_semantic_views`, `mark_missing_day` **đã được kiểm chứng
+trên production**, không còn là suy đoán. Hermes từng xác nhận DDL ở commit `92e386f`
+bằng một cluster PostgreSQL 14.24 tạm thời; bằng chứng production mạnh hơn và đã có.
+
+Còn lại **đúng ba hàm chưa từng chạy trên database sống**:
+
+```text
+load_bundle()   -- DELETE-then-INSERT theo gold_release_id, rồi upsert dim
+publish()       -- transaction đổi con trỏ active_release
+record_dq()     -- ghi 27 check vào gold_control.dq_result
+```
+
+Ba hàm này chỉ kiểm chứng được khi có **một Silver release thật**, vì `build_bundle`
+từ chối khi không có release consumable. Đây là việc số 1 của bạn, và cũng là lần
+đầu tiên semantics transaction của `publish()` được kiểm tra trên psycopg2 thật.
 
 Lệnh kiểm chứng, chạy theo đúng thứ tự:
 
@@ -55,7 +84,11 @@ sudo -u postgres psql -d lakehouse -tc "SELECT count(*) FROM information_schema.
 sudo -u postgres psql -d lakehouse -tc "SELECT conname FROM pg_constraint WHERE conname LIKE 'chk_%' ORDER BY 1;"
 ```
 
-Kỳ vọng: 3 schema; `gold` có 12 bảng + 10 view; `gold_control` 4 bảng; `gold_staging` 4 bảng; các constraint `chk_snapshot_open_status`, `chk_snapshot_closed_not_open`, `chk_market_city`, `chk_pair_ordered`, `chk_pair_positive` đều có mặt.
+**ĐÃ ĐỐI CHIẾU XONG trên production VPS:** 3 schema tồn tại; `gold` có 12 base table
++ 10 view; `gold_control` 4 bảng; `gold_staging` 4 bảng; encoding UTF8; đủ 19 constraint
+`chk_` gồm `chk_snapshot_open_status`, `chk_snapshot_closed_not_open`, `chk_market_city`,
+`chk_pair_ordered`, `chk_pair_positive`. Ba lệnh trên nay chỉ dùng để **tái lập** khi
+bạn sửa DDL, không phải để khám phá nữa.
 
 **Nếu bước 1 lỗi:** đó là lỗi thật, gửi nguyên văn traceback. Đừng tự sửa DDL rồi bỏ qua, vì DDL mã hóa các quyết định nghiệp vụ D-G05 và GAP-9.
 
@@ -185,10 +218,11 @@ Tôi xếp theo khả năng có lỗi thật khi chạy trên dữ liệu thật
 
 ### Rủi ro cao
 
-**5.1 `fact_job_change_event` hiện chỉ thấy thay đổi TRONG MỘT RELEASE.**
-`build_bundle()` mặc định `change_event_scope = "release_only"`: nó chỉ so sánh các observation có trong release hiện tại. Thay đổi giữa hai ngày cào khác nhau **sẽ không bị phát hiện**, trừ khi caller truyền `historical_observations`.
-→ Fact 4 sẽ gần như rỗng trong vận hành thật, vì mỗi release thường chỉ chứa một observation cho mỗi tin nguồn.
-→ Cần quyết định: đọc lịch sử observations từ đâu (Parquet nhiều ngày, hay `silver_observation_registry` trong SQLite vốn đã tích lũy toàn bộ). Tôi nghiêng về SQLite vì đã có sẵn `observed_at`, salary, city, description và không cần quét Parquet nhiều ngày. **Chưa triển khai vì nó đổi đáng kể chi phí I/O và cần Hermes đồng ý.**
+**5.1 ✅ ĐÃ ĐƯỢC HERMES XỬ LÝ (commit 92e386f).** `load_historical_release_data()`
+nay đọc toàn bộ release COMPLETE trước đó qua manifest, và `pipeline.py` gọi nó mặc
+định trên đường đọc release thật, nên `change_event_scope = "release_plus_history"`.
+`build_change_events()` cũng nhận `late_observation_ids` để gắn cờ `is_revised`.
+**Nhưng xem hai rủi ro mới ở 5.13 và 5.14** — cách sửa này mở ra hai vấn đề khác.
 
 **5.2 `release_controller.publish()` trộn `with connection:` và `connection.commit()`.**
 psycopg2: `with connection:` là transaction block (commit/rollback khi thoát), còn các hàm khác gọi `connection.commit()` tường minh. Tôi đã kiểm tra logic nhưng **chưa chạy trên DB thật**. Đây là chỗ dễ sai nhất về semantics transaction.
@@ -200,9 +234,9 @@ psycopg2: `with connection:` là transaction block (commit/rollback khi thoát),
 
 ### Rủi ro trung bình
 
-**5.4 `build_effective_link()` chọn link mới nhất theo `(matched_at, resolution_version)`.**
-So sánh tuple chuỗi. Với `resolution_version` dạng `v1`, `v2`, ..., `v10` thì so chuỗi sẽ xếp `v10 < v2`. Chưa thành vấn đề vì chỉ có `v1`, nhưng sẽ sai khi lên `v10`.
-→ Đề xuất Hermes sửa thành so sánh số, hoặc đổi quy ước version zero-padded.
+**5.4 ✅ ĐÃ ĐƯỢC HERMES XỬ LÝ (commit 92e386f).** `_resolution_version_key()` trả
+`(int, int, str)` nên `v10` giờ xếp đúng sau `v9`, không còn so sánh chuỗi.
+Vẫn nên có test cố định thứ tự `v9 < v10` để không hồi quy.
 
 **5.5 `plan_dim_job()` nhánh "unchanged" trả về nguyên row cũ rồi upsert lại.**
 Không sai, nhưng ghi lại `valid_from_at` cũ và không cập nhật `updated_at`. Nếu Hermes muốn theo dõi "lần cuối job được thấy", chỗ này cần chỉnh.
@@ -238,6 +272,53 @@ Job có 41 skill vẫn sinh 820 cặp. Với k skill là k(k−1)/2 cặp, một
      Báo cáo ambiguous trả về danh sách tên có nhiều cách viết thô khác nhau,
      nhưng chưa được ghi ra đâu cả — chỉ nằm trong bundle.reports.
 ```
+
+### Rủi ro MỚI phát sinh từ cách sửa 5.1 (cần bạn xử lý)
+
+**5.13 Một release cũ hỏng sẽ chặn vĩnh viễn mọi lần chạy Gold sau này.**
+`load_historical_release_data()` gọi `verify_release()` cho từng release trước đó và
+**`raise ValueError` ngay khi bất kỳ release nào fail**:
+
+```python
+problems = verify_release(candidate, root)
+if problems:
+    raise ValueError(f"historical Silver release {candidate.release_id} verification failed: ...")
+```
+
+Fail-closed là đúng nguyên tắc, nhưng không có escape hatch. Chỉ cần một tệp Parquet
+của release 3 tháng trước bị hỏng trên MinIO là Gold **không bao giờ chạy được nữa**,
+kể khi release hiện tại hoàn toàn lành.
+→ Đề xuất: hoặc cho phép cách ly một release cũ có ghi nhận vào `conflict_report`
+(không dùng lịch sử của release đó nhưng vẫn publish), hoặc thêm cờ vận hành
+`GOLD_HISTORY_STRICT=false`. Phải chọn có chủ đích, không để mặc định cứng.
+
+**5.14 Chi phí đọc lịch sử tăng dồn theo thời gian vận hành.**
+Mỗi lần chạy Gold đọc lại **toàn bộ** `observations` và `entity_links` của **mọi**
+release COMPLETE trước đó. Ngày 1 đọc 1 release, ngày 30 đọc 29 release, ngày 365
+đọc 364 release. Đây là hành vi O(N) mỗi ngày, tức O(N²) tích lũy, và nằm trên VPS
+8GB RAM với MinIO bind `127.0.0.1`.
+→ Hai hướng: giới hạn số release gần nhất (ví dụ 90 ngày, khớp `evidence_window_days`
+và grace period dài nhất 21 ngày), hoặc đọc lịch sử từ SQLite
+`silver_observation_registry` vốn đã tích lũy sẵn toàn bộ bằng một query không cần
+quét Parquet. Tôi nghiêng về SQLite.
+
+**5.15 `create_gold_db.sh` cấp `gold_reader` USAGE và SELECT trên `gold_staging`.**
+Trái D-G04: BI không được thấy dữ liệu trung gian. Script này Hermes viết, nên tôi
+không tự sửa để tránh dẫm work của bạn. Lệnh kiểm tra:
+
+```bash
+sudo -u postgres psql -d lakehouse -tc "SELECT nspname, has_schema_privilege('gold_reader', nspname, 'USAGE') FROM pg_namespace WHERE nspname LIKE 'gold%' ORDER BY 1;"
+```
+
+Kỳ vọng theo thiết kế: `gold` true, `gold_control` true, `gold_staging` **false**.
+
+**5.16 `GOLD_DB_*` chỉ tới được worker Airflow sau khi restart service.**
+`airflow-scheduler.service` và `airflow-webserver.service` đều khai
+`EnvironmentFile=/home/womcloud/airflow/airflow.env`, còn DAG lại
+`env = os.environ.copy()` khi spawn subprocess. Nghĩa là sau khi append biến vào
+`airflow.env`, **phải** `sudo systemctl restart airflow-scheduler airflow-webserver`
+thì Gold mới thấy mật khẩu và đọc đúng `LAKEHOUSE_GOLD_ENABLED`. Đây là chỗ rất dễ
+đổ lỗi sai cho code khi thật ra chỉ thiếu restart.
 
 ---
 
@@ -279,18 +360,18 @@ Q-G05  MERGED/SPLIT: có trong VALID_ENTITY_STATUSES nhưng KHÔNG đường cod
 Q-G07  Retention dữ liệu nóng: đề xuất 24 tháng. Chưa ai chốt.
        Gold hiện KHÔNG xóa release cũ — mỗi ngày một gold_release_id mới,
        bảng sẽ phình. Cần chính sách dọn.
+       LIÊN QUAN 5.14: retention Gold và giới hạn lịch sử đọc nên chốt cùng lúc.
 
 GAP-2  publish_silver_for_gold (SQLite) — xóa hay giữ làm bridge?
 
 Q-G11  Trục city: có mở rộng CITY_ALIASES ngoài 4 nhóm không?
        Nếu có, phải sửa chk_market_city trong DDL.
 
-MỚI    evidence_window_days = 14 đang là hằng số trong contract.py và là
-       DEFAULT trong gold_control.load_run. Cần đo flickering thật ở G01
-       trước khi coi 14 ngày là đúng.
+MỚI    evidence_window_days = 14 là hằng số trong contract.py và DEFAULT trong
+       gold_control.load_run. Cần đo flickering thật sau khi có release đầu tiên.
 
-MỚI    change_event nên đọc lịch sử từ SQLite silver_observation_registry
-       hay từ Parquet nhiều ngày? (mục 5.1)
+MỚI    (đã chốt hướng, chờ bạn làm) nguồn đọc lịch sử cho change_event:
+       Parquet mọi release (hiện tại, xem 5.14) hay SQLite registry.
 ```
 
 ---
@@ -298,18 +379,23 @@ MỚI    change_event nên đọc lịch sử từ SQLite silver_observation_reg
 ## 8. Những gì CHƯA làm, để Hermes không tưởng đã xong
 
 ```text
-1. Chưa chạy bất kỳ câu SQL nào trên PostgreSQL thật (mục 2).
-2. Chưa có dữ liệu thật: LAKEHOUSE_SILVER_ENABLED vẫn false, chưa có release
+1. ✅ ĐÃ XONG: DDL, semantic views và mark_missing_day chạy trên PostgreSQL
+   production (mục 2). Không còn là suy đoán.
+2. CHƯA kiểm chứng: load_bundle(), publish(), record_dq() — cần release thật.
+   Đặc biệt chưa ai chứng minh active_release KHÔNG đổi khi DQ BLOCK.
+3. Chưa có dữ liệu thật: LAKEHOUSE_SILVER_ENABLED vẫn false, chưa có release
    Silver nào từ 9 nền tảng, nên N_d vẫn là ước lượng.
-3. Chưa đo SLA thật (2 giờ Gold / 3 giờ BI chỉ là đề xuất).
-4. Chưa viết docs/powerbi-gold-connection.md (chờ DB thật để ghi click-path chính xác).
-5. Chưa triển khai historical_observations cho change_event (mục 5.1).
-6. Chưa dùng _bronze_metadata (mục 6).
-7. Chưa có backfill/revision release — hiện chỉ có đường chạy thuận.
-8. Chưa có retention/dọn release cũ.
-9. Gold chưa từng chạy qua Airflow trên VPS (LAKEHOUSE_GOLD_ENABLED=false).
-10. Chưa kiểm tra encoding PostgreSQL có phải UTF8 không, trong khi DDL có
-    CHECK constraint chứa chuỗi tiếng Việt.
+4. Chưa đo SLA thật (2 giờ Gold / 3 giờ BI chỉ là đề xuất).
+5. docs/powerbi-gold-connection.md đã tồn tại (Hermes viết) nhưng CHƯA được
+   đối chiếu với DB thật: role gold_reader, cổng tunnel, view có bị chặn
+   bởi active_release hay không.
+6. Chưa xử lý 4 rủi ro mới 5.13 đến 5.16.
+7. Chưa dùng _bronze_metadata cho DQ-16 và giám sát drift (mục 6).
+8. Chưa có backfill/revision release — hiện chỉ có đường chạy thuận.
+9. Chưa có retention/dọn release cũ; liên quan trực tiếp 5.14.
+10. Gold chưa từng chạy qua Airflow trên VPS (LAKEHOUSE_GOLD_ENABLED=false),
+    và GOLD_DB_* chưa chắc tới worker nếu chưa restart service (5.16).
+11. gold_reader vẫn có quyền trên gold_staging, trái D-G04 (5.15).
 ```
 
 ---

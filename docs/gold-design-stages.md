@@ -1,7 +1,7 @@
 # Thiết kế Chi tiết Kiến trúc Tầng Vàng (Gold Layer) — IT Job Data Lakehouse
 
 > **Dự án:** IT Job Data Lakehouse
-> **Phiên bản tài liệu:** 4.0 — 18/11/2026. Bản 3.0 khảo sát code sau 4 commit Hermes và sửa 5 sai lệch Silver. **Bản 4.0 đã triển khai xong tầng Gold**: `src/gold/` (11 module), `dags/dag_gold_mart_build.py`, và 30 test nghiệm thu. Trong lúc triển khai đã phát hiện và sửa thêm **2 bug tích hợp nghiêm trọng ở Silver** (mục Giai đoạn 0 §7). Tổng kiểm thử hiện tại: **87 test pass**.
+> **Phiên bản tài liệu:** 5.0 — 19/11/2026. Bản 4.0 triển khai xong tầng Gold. **Bản 5.0 ghi nhận DDL và semantic views đã được thực thi thành công trên PostgreSQL production** (database `lakehouse`, VPS): 36 lệnh DDL, 12 base table + 10 view schema `gold`, 4 bảng `gold_control`, 4 bảng `gold_staging`, encoding UTF8, đủ 19 constraint `chk_`. Đường `mark_missing_day()` cũng đã ghi thật vào `gold_control.daily_snapshot`. Ba hàm `load_bundle()`, `publish()`, `record_dq()` vẫn chờ dữ liệu Silver thật. Hermes đã đóng mục 5.1 và 5.4 của brief bằng `load_historical_release_data()` và `_resolution_version_key()`. Tổng kiểm thử: **92 test pass** (34 Gold + 58 Silver/DAG).
 > **Phạm vi:** Phân tích **nguồn cung tin tuyển dụng được hệ thống quan sát** trên 9 nền tảng (`careerviet`, `upzi`, `vietnamdevs`, `vieclam24h`, `devwork`, `itviec`, `topcv`, `topdev`, `vietnamworks`).
 > **Nguồn dữ liệu vào:** Silver `entities` (E), `entity_links` (L), `observations` (O) + manifest `COMPLETE` + audit log của một phiên Silver.
 > **Đầu ra:** 5 dimension, 4 fact nền tảng, 3 bảng tổng hợp BI trong **PostgreSQL database `lakehouse`**, công bố theo `gold_release_id` cho Power BI.
@@ -103,11 +103,19 @@ BronzeToSilverPipeline.process_bronze_objects()
 ### Việc còn lại để chạy thật trên VPS
 
 ```text
-1. Bạn chạy block tạo database `lakehouse` + role gold_writer/gold_reader (GAP-3).
-2. Thêm biến môi trường Gold vào ~/airflow/airflow.env (GOLD_DB_*).
-3. Bật LAKEHOUSE_SILVER_ENABLED=true và chạy một phiên Silver thật để có release.
-4. Bật LAKEHOUSE_GOLD_ENABLED=true và unpause DAG daily_gold_mart_build.
-5. Hermes review toàn bộ src/gold/ và tinh chỉnh.
+✅ 1. Database `lakehouse` + role gold_writer/gold_reader  → ĐÃ XONG 19/11/2026.
+✅ 2. DDL + semantic views thực thi trên PostgreSQL production → ĐÃ XONG (36 + 10).
+✅ 3. GOLD_DB_* đã nằm trong ~/airflow/airflow.env (chmod 600).
+4. KHỞI ĐỘNG LẠI airflow-scheduler và airflow-webserver để worker nhận GOLD_DB_*.
+   Hai service nạp EnvironmentFile=airflow.env, còn DAG copy os.environ sang
+   subprocess; không restart thì Gold không thấy mật khẩu.
+5. Bật LAKEHOUSE_SILVER_ENABLED=true, chạy một phiên Silver 9 nền tảng
+   để có silver_release COMPLETE đầu tiên.
+6. Chạy Gold ba lần: --no-publish, publish thật, và publish khi có check BLOCK
+   để chứng minh active_release không đổi khi BLOCK. Đây là lần đầu tiên
+   load_bundle(), publish(), record_dq() chạy trên DB thật.
+7. Bật LAKEHOUSE_GOLD_ENABLED=true và unpause DAG daily_gold_mart_build
+   chỉ sau khi toàn bộ gate ở bước 6 đạt.
 ```
 
 `src/utils/publish_silver_for_gold.py` (GAP-2) vẫn ghi SQLite `gold_entities`. Đây là **adapter cũ, nay không nằm trên đường đi của Gold**: Gold đọc thẳng Silver release qua `src/gold/`. Nên giữ nó làm bridge kiểm thử local hoặc xóa sau khi Hermes xác nhận không còn ai dùng.
@@ -182,7 +190,7 @@ Khi được cấp `minio_client`, writer nhân bản object và manifest lên b
 |---|---|---|---|
 | **GAP-1** | ✅ **ĐÃ SỬA.** Trước đây chưa có `silver_release_id`; manifest chỉ ở cấp partition. | Gold không thể "đọc đúng một release", sẽ quét thư mục ngày và suy ra trạng thái hiện hành — đúng điều `Trienkhai.md` §2.1 cấm. | Đã thêm `BronzeToSilverPipeline.seal_silver_release()` + `SilverWriter.write_release_manifest()`. Mỗi phiên ghi `data/silver/releases/<silver_release_id>.json` (và mirror lên MinIO), chứa `status`, `manifest_fingerprint`, `snapshot_cutoff_at`, `taxonomy_versions`, `metrics` và danh sách object kèm `sha256`/`records`. Report Silver nay trả về `silver_release_id`, `silver_release_status`, `manifest_fingerprint`. |
 | **GAP-2** | **`publish_entities` ghi SQLite `gold_entities`**, trong khi kiến trúc đã chốt là Gold PostgreSQL. | Gold thật không tồn tại; Power BI không kết nối được; SQLite không chịu được concurrent BI read. | Giữ hàm này làm bridge kiểm thử local; viết loader PostgreSQL thật ở `src/gold/`. Không để BI đọc SQLite. |
-| **GAP-3** | **Chưa có database `lakehouse` trên VPS**, PostgreSQL hiện chỉ có DB `airflow`. | Không có nơi chứa 12 bảng Gold. | Tạo DB + role Gold read-only, không dùng role `airflow`. **Đã xác minh 18/11/2026:** VPS chỉ có `postgres` và `airflow`; `listen_addresses = localhost`; disk còn 45GB; RAM 9.7GB (6.4GB available). |
+| **GAP-3** | ✅ **ĐÃ XỬ LÝ.** Trước đây PostgreSQL chỉ có DB `airflow`. | Không có nơi chứa 12 bảng Gold. | **Đã tạo và xác minh trên VPS ngày 19/11/2026** qua `infrastructure/postgres/create_gold_db.sh`: database `lakehouse` encoding UTF8 owner `gold_writer`, 3 schema `gold`/`gold_control`/`gold_staging`, role `gold_writer` + `gold_reader`, DDL 36 lệnh chạy thành công. |
 | **GAP-4** | **Đã giảm mức độ.** Parquet `entities` 16 trường vẫn không có `job_level`/`work_mode`, nhưng SQLite `entity_registry` **đã có** `canonical_job_level` và `canonical_work_mode`. Riêng `job_domain` và `skills_standardized` vẫn **chỉ** có ở Parquet `observations`. | Nếu Gold chỉ đọc Parquet E thì `dim_job` thiếu level/work_mode. Nếu chỉ đọc SQLite thì thiếu domain/skill. | Gold bắt buộc dùng **reader hai nguồn** (xem §1.1) và chốt Q-G09. |
 | **GAP-5** | ✅ **ĐÃ SỬA.** `is_primary_source` trước đây gán `= (match_status == 'DISTINCT_ENTITY')`, tức "observation đã tạo entity", không phải "observation tốt nhất". | Chính sách "ưu tiên `is_primary_source` khi duy nhất" của G07 sẽ chọn sai observation đại diện. | `bronze_to_silver.process()` nay tính observation canonical bằng chính `choose_canonical()` rồi mới set `is_primary_source`. **Lưu ý ngữ nghĩa còn lại:** link là bản ghi audit bất biến nên cờ này **time-scoped** — link cũ vẫn giữ `True` nếu nó từng là canonical. Gold phải lấy link được chấp nhận **mới nhất** theo `matched_at` cho mỗi entity. |
 | **GAP-6** | ✅ **ĐÃ SỬA.** `SKILL_TAXONOMY` ~130 kỹ năng đã có nhưng không có version; quy tắc tên công ty và city cũng vậy. | `dim_skill`/`dim_company` đổi mapping sẽ âm thầm viết lại lịch sử báo cáo. | Đã thêm `SKILL_TAXONOMY_VERSION`, `COMPANY_NORMALIZATION_VERSION`, `CITY_NORMALIZATION_VERSION`, `TRANSFORM_VERSION` và hàm `normalization_versions()` trong `transformers.py`. Các version này được ghi vào report Silver và vào release manifest, nên Gold chỉ việc chép vào `gold_control.load_run`. |
@@ -197,7 +205,8 @@ Khi được cấp `minio_client`, writer nhân bản object và manifest lên b
 P-01  Silver chạy thật ít nhất một phiên với LAKEHOUSE_SILVER_ENABLED=true.
 P-02  ✅ ĐÃ XONG (GAP-1): seal_silver_release sinh silver_release_id,
       manifest COMPLETE + manifest_fingerprint + object list có sha256.
-P-03  GAP-3: PostgreSQL database `lakehouse` và role gold_writer/gold_reader.
+P-03  ✅ ĐÃ XONG (GAP-3): database `lakehouse` UTF8 + role gold_writer/gold_reader
+      + 3 schema, đã xác minh trên VPS ngày 19/11/2026.
 P-04  Chốt hợp đồng metric (Giai đoạn 6): D-G05 đã chốt open_job_count;
       các metric còn lại vẫn cần đủ cohort, tử số, mẫu số và ví dụ tính tay.
 P-05  ✅ ĐÃ XONG (D-G02): match_status được Gold chấp nhận.
@@ -1621,7 +1630,7 @@ Nếu sau này cần quan sát tiến độ từng fact riêng lẻ, có thể t
 | STT | Hạng mục | Module | Trạng thái |
 |---|---|---|---|
 | 1 | ✅ Sửa GAP-1: `seal_silver_release` + `write_release_manifest` | `src/etl/bronze_to_silver.py`, `src/etl/silver_writer.py` | ☑ Xong, có test |
-| 2 | Tạo database `lakehouse` + role `gold_writer`, `gold_reader` | `infrastructure/postgres/create_gold_db.sh` | ☐ |
+| 2 | ✅ Tạo database `lakehouse` + role `gold_writer`, `gold_reader` | `infrastructure/postgres/create_gold_db.sh` | ☑ Xong, xác minh trên VPS |
 | 3 | ✅ DDL 5 dim + 7 fact + 4 control + 4 staging | `src/gold/ddl.sql` | ☑ Xong, test đếm đủ 20 bảng |
 | 4 | ✅ Reader **kép**: SQLite registry + Parquet observations, phát hiện `SOURCE_DIVERGENCE` | `src/gold/silver_release_reader.py` | ☑ Xong, có test |
 | 5 | ✅ Loader dimension | `src/gold/load_dimensions.py` | ☑ Xong, có test |
