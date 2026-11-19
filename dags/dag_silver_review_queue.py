@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import timedelta
 from typing import Any
 
@@ -19,6 +20,8 @@ except ImportError:  # pragma: no cover
 PROJECT_ROOT = os.environ.get("LAKEHOUSE_PROJECT_ROOT", "/home/womcloud/IT-Job-Data-Lakehouse")
 STATE_DB = os.environ.get("LAKEHOUSE_STATE_DB_PATH", f"{PROJECT_ROOT}/data/state_store.db")
 QUEUE_PATH = os.environ.get("LAKEHOUSE_PENDING_REVIEW_PATH", f"{PROJECT_ROOT}/data/operational/pending_review.csv")
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 
 def _sync_review_queue(**_: Any) -> dict[str, Any]:

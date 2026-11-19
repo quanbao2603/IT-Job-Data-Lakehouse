@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import timedelta
 from typing import Any
 
@@ -23,6 +24,8 @@ except ImportError:  # pragma: no cover
 PROJECT_ROOT = os.environ.get("LAKEHOUSE_PROJECT_ROOT", "/home/womcloud/IT-Job-Data-Lakehouse")
 PYTHON = os.environ.get("LAKEHOUSE_PYTHON", f"{PROJECT_ROOT}/lakehouse_env/bin/python")
 STATE_DB = os.environ.get("LAKEHOUSE_STATE_DB_PATH", f"{PROJECT_ROOT}/data/state_store.db")
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 SOURCES = (
     "careerviet", "devwork", "itviec", "topcv", "topdev",
     "upzi", "vieclam24h", "vietnamdevs", "vietnamworks",
