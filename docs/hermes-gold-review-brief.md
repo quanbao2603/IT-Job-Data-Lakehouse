@@ -3,7 +3,7 @@
 > **Mục đích:** tài liệu này đi kèm `docs/gold-design-stages.md` (v5.0). Đọc thiết kế để hiểu *tại sao*, đọc file này để biết *review cái gì, theo thứ tự nào, và không được phá cái gì*.
 > **Trạng thái repo khi cập nhật:** `main` = `2c25a22`, gồm 3 commit hardening Gold của Hermes viết sau bản brief đầu.
 > **Kiểm thử:** 92 test pass (34 Gold + 58 Silver/DAG), 2 skipped. `compileall` sạch.
-> **Bản cập nhật 19/11/2026:** DDL và semantic views đã chạy trên PostgreSQL production (mục 2). Hermes đã đóng 5.1 và 5.4. Thêm bốn rủi ro mới 5.13 đến 5.16.
+> **Bản cập nhật 19/11/2026:** DDL và semantic views đã chạy trên PostgreSQL production (mục 2). Hermes đã đóng 5.1 và 5.4. Thêm bốn rủi ro mới 5.13 đến 5.16. **5.17 là lỗi ForeignKeyViolation Hermes gặp trên VPS, đã sửa kèm 4 check DQ mới (tổng 32 check).**
 > **Người viết:** agent triển khai Gold (không phải Hermes). Mọi nhận định dưới đây đều kèm bằng chứng để Hermes tự kiểm chứng, không yêu cầu tin tưởng.
 
 ---
@@ -61,7 +61,7 @@ Còn lại **đúng ba hàm chưa từng chạy trên database sống**:
 ```text
 load_bundle()   -- DELETE-then-INSERT theo gold_release_id, rồi upsert dim
 publish()       -- transaction đổi con trỏ active_release
-record_dq()     -- ghi 27 check vào gold_control.dq_result
+record_dq()     -- ghi 32 check vào gold_control.dq_result
 ```
 
 Ba hàm này chỉ kiểm chứng được khi có **một Silver release thật**, vì `build_bundle`
@@ -320,6 +320,39 @@ Kỳ vọng theo thiết kế: `gold` true, `gold_control` true, `gold_staging` 
 thì Gold mới thấy mật khẩu và đọc đúng `LAKEHOUSE_GOLD_ENABLED`. Đây là chỗ rất dễ
 đổ lỗi sai cho code khi thật ra chỉ thiếu restart.
 
+**5.17 ✅ LỖI PRODUCTION HERMES TÌM THẤY — ĐÃ SỬA.** Hermes chạy thật trên VPS và gặp:
+
+```text
+psycopg2.errors.ForeignKeyViolation: insert or update on table "dim_job"
+violates foreign key constraint "dim_job_company_key_fkey"
+DETAIL: Key (company_key)=(co_c16d4635...) is not present in table "dim_company".
+```
+
+Gốc lỗi: `build_dim_company(observation_rows)` chỉ xây dimension từ observation
+**của release hiện tại**, còn `plan_dim_job()` duyệt **mọi** entity hiệu lực. Một entity
+có toàn bộ observation thuộc release trước sẽ không có observation đại diện ở đây, nên
+`resolve_company_key(None, canonical_company=...)` sinh ra một key chưa từng có trong
+`dim_company`. Đây là bug thật trong code Gold, không phải lỗi cấu hình VPS.
+
+Đã sửa hai tầng:
+
+```text
+1. build_dim_company(..., canonical_companies=[...]) bảo đảm mọi entity hiệu lực
+   đều có thành viên dimension, kể cả khi release này không có observation nào của nó.
+   Khóa dùng đúng biểu thức resolve_company_key đang dùng nên hai bên luôn khớp.
+2. data_quality thêm DQ-02b/02c/02d/02e: kiểm ĐÓNG KHÓA cho mọi chiều tham chiếu
+   (company_key, skill_key, platform_key, date_key). Lỗi loại này giờ bị chặn
+   TRƯỚC khi chạm PostgreSQL, thay vì chờ psycopg2 báo lúc chạy thật.
+```
+
+Số check DQ tăng từ 27 lên **32**. Test hồi quy: `TestDimensionKeyClosure` trong
+`tests/test_gold_mart.py`, gồm case cắt bỏ thành viên đang được tham chiếu để chứng
+minh cổng DQ thật sự bắt được chứ không chỉ đi qua.
+
+**Yêu cầu Hermes:** đây là lớp lỗi "dimension không đóng khóa với fact". Mỗi lần thêm
+dimension hoặc fact mới, chạy lại DQ-02b..02e. Kiểm tra tĩnh kiểu này rẻ hơn rất nhiều
+so với để PostgreSQL báo ForeignKeyViolation trong phiên chạy thật.
+
 ---
 
 ## 6. Cơ hội mới từ commit `08b9eb8` của Hermes
@@ -389,7 +422,7 @@ MỚI    (đã chốt hướng, chờ bạn làm) nguồn đọc lịch sử cho
 5. docs/powerbi-gold-connection.md đã tồn tại (Hermes viết) nhưng CHƯA được
    đối chiếu với DB thật: role gold_reader, cổng tunnel, view có bị chặn
    bởi active_release hay không.
-6. Chưa xử lý 4 rủi ro mới 5.13 đến 5.16.
+6. Chưa xử lý 4 rủi ro 5.13 đến 5.16. (5.17 đã sửa: FK dim_job.company_key.)
 7. Chưa dùng _bronze_metadata cho DQ-16 và giám sát drift (mục 6).
 8. Chưa có backfill/revision release — hiện chỉ có đường chạy thuận.
 9. Chưa có retention/dọn release cũ; liên quan trực tiếp 5.14.

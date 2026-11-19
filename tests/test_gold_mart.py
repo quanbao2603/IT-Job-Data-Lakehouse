@@ -562,5 +562,53 @@ class TestSqlScripts(unittest.TestCase):
             self.assertIn("gold_control.active_release", view)
 
 
+class TestDimensionKeyClosure(unittest.TestCase):
+    """Reproduces the production ForeignKeyViolation Hermes hit on the VPS."""
+
+    def test_entity_without_observation_in_this_release_still_gets_a_company_member(self):
+        # uj_history exists in the registry but none of its observations are in this
+        # release, so dim_company built from observations alone would miss its company.
+        entities = [
+            _entity("uj_a"),
+            _entity("uj_history", title="Legacy Data Engineer", company="legacycorp"),
+        ]
+        links = [_link("obs_a1", "uj_a")]
+        observations = [_observation("obs_a1", unified_job_id="uj_a")]
+        bundle = _bundle(entities, links, observations)
+
+        company_keys = {row["company_key"] for row in bundle.dim_company}
+        self.assertTrue(
+            all(row["company_key"] in company_keys for row in bundle.dim_job),
+            "every dim_job company_key must exist in dim_company",
+        )
+        self.assertEqual(blocking_failures(run_checks(bundle)), [])
+
+    def test_dq02b_blocks_when_a_company_member_is_missing(self):
+        entities, links, observations = _simple_fixture()
+        bundle = _bundle(entities, links, observations)
+        self.assertEqual(blocking_failures(run_checks(bundle)), [])
+        # Drop the member a dim_job row actually references; the UNKNOWN row is never
+        # referenced by these jobs, so removing it would prove nothing.
+        referenced = bundle.dim_job[0]["company_key"]
+        bundle.dim_company = [row for row in bundle.dim_company
+                              if row["company_key"] != referenced]
+        codes = {row["check_code"] for row in blocking_failures(run_checks(bundle))}
+        self.assertIn("DQ-02b", codes)
+
+    def test_dq02c_and_02e_block_on_missing_skill_and_date_members(self):
+        entities, links, observations = _simple_fixture()
+        bundle = _bundle(entities, links, observations)
+        self.assertTrue(bundle.skill and bundle.dim_date)
+        bundle.dim_skill = []
+        codes = {row["check_code"] for row in blocking_failures(run_checks(bundle))}
+        self.assertIn("DQ-02c", codes)
+        bundle.dim_skill = [{"skill_key": row["skill_key"], "taxonomy_version": "t",
+                             "skill_code": "x", "skill_name": "X", "skill_group": None,
+                             "is_unknown": False} for row in bundle.skill]
+        bundle.dim_date = []
+        codes = {row["check_code"] for row in blocking_failures(run_checks(bundle))}
+        self.assertIn("DQ-02e", codes)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -208,7 +208,10 @@ def build_bundle(
         for skill in (row.get("skills_standardized") or [])
     }
     dim_skill, unmapped_skills = build_dim_skill(observed_skills, taxonomy_version)
-    dim_company, company_ambiguity = build_dim_company(observation_rows)
+    dim_company, company_ambiguity = build_dim_company(
+        observation_rows,
+        canonical_companies=[row.get("canonical_company") for row in entity_rows],
+    )
     observed_platforms = {str(row.get("platform") or "").casefold() for row in observation_rows}
     dim_platform = build_dim_platform(observed_platforms)
 

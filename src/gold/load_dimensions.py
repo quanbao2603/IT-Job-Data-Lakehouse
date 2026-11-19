@@ -111,11 +111,14 @@ def build_dim_skill(
 def build_dim_company(
     observations: Iterable[dict[str, Any]],
     normalization_version: str = COMPANY_NORMALIZATION_VERSION,
+    canonical_companies: Iterable[Optional[str]] = (),
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Group by normalized name only; never fuzzy-merge two similar names.
 
-    Returns the dimension rows plus an ambiguity report listing normalized names that
-    carry several distinct raw spellings, which a human must review before merging.
+    `canonical_companies` must carry the canonical_company of EVERY effective entity.
+    An entity whose observations all belong to earlier Silver releases has no
+    representative observation here, so its company would otherwise be missing from
+    this dimension and dim_job would break its foreign key on insert.
     """
     grouped: dict[str, dict[str, Any]] = {}
     for observation in observations:
@@ -176,6 +179,26 @@ def build_dim_company(
                 "company_name_normalized": normalized,
                 "distinct_raw_spellings": sorted(distinct_raw),
             })
+
+    # Closure: every entity company needs a dimension member, even when this release
+    # contains no observation for it. The key uses the same expression as
+    # resolve_company_key so both sides always agree.
+    covered = {str(row["company_name_normalized"]) for row in rows}
+    for canonical in canonical_companies:
+        normalized = clean_company_name(canonical) if canonical else ""
+        if not normalized or normalized in covered:
+            continue
+        covered.add(normalized)
+        rows.append({
+            "company_key": company_key(normalized, normalization_version),
+            "company_name_normalized": normalized,
+            "company_display_name": str(canonical).strip(),
+            "company_alias_raw": None,
+            "company_industry": None,
+            "company_size": None,
+            "normalization_version": normalization_version,
+            "is_unknown": False,
+        })
     return rows, ambiguous
 
 

@@ -1637,7 +1637,7 @@ Nếu sau này cần quan sát tiến độ từng fact riêng lẻ, có thể t
 | 6 | ✅ Loader `dim_job` SCD2, tái dùng đúng tie-break `choose_canonical()` | `src/gold/load_dim_job.py` | ☑ Xong, TG-08/TG-09 pass |
 | 7 | ✅ Loader 4 fact nền tảng | `src/gold/load_facts.py` | ☑ Xong, TG-01/05/10/11/14/15 pass |
 | 8 | ✅ Loader 3 bảng tổng hợp BI + percentile_cont | `src/gold/load_aggregates.py` | ☑ Xong, TG-13/TG-17 pass |
-| 9 | ✅ 27 check DQ + ghi `dq_result` | `src/gold/data_quality.py` | ☑ Xong, TG-06/07/18 pass |
+| 9 | ✅ 32 check DQ, gồm đóng khóa dimension DQ-02b..02e + ghi `dq_result` | `src/gold/data_quality.py` | ☑ Xong, có test hồi quy FK |
 | 10 | ✅ Release controller + publish transaction + MISSING day | `src/gold/release_controller.py` | ☑ Xong |
 | 11 | ✅ Semantic views ràng buộc vào `active_release` | `src/gold/semantic_views.sql` | ☑ Xong, test đếm 10 view |
 | 12 | ✅ DAG `daily_gold_mart_build` (3 task, xem Giai đoạn 11 §1) | `dags/dag_gold_mart_build.py` | ☑ Xong |

@@ -63,6 +63,40 @@ def run_checks(bundle: Any) -> list[dict[str, Any]]:
     )
     results.append(_result("DQ-02", "Facts reference an existing dim_job version", 0, orphan, BLOCK, orphan == 0))
 
+    # DQ-02b..02e closure over every remaining dimension key. A missing member here is
+    # a PostgreSQL ForeignKeyViolation at insert time, so it must block before the DB.
+    company_keys = {row["company_key"] for row in bundle.dim_company}
+    skill_keys = {row["skill_key"] for row in bundle.dim_skill}
+    platform_keys = {row["platform_key"] for row in bundle.dim_platform}
+    date_keys = {row["date_key"] for row in bundle.dim_date}
+
+    missing_company = sum(
+        1 for row in bundle.dim_job if row["company_key"] not in company_keys
+    ) + sum(1 for row in bundle.snapshot if row["company_key"] not in company_keys) + sum(
+        1 for row in bundle.company if row["company_key"] not in company_keys
+    )
+    results.append(_result("DQ-02b", "Every company_key exists in dim_company", 0, missing_company, BLOCK,
+                           missing_company == 0))
+
+    missing_skill = sum(1 for row in bundle.skill if row["skill_key"] not in skill_keys) + sum(
+        1 for row in bundle.skill_pair
+        if row["skill_a_key"] not in skill_keys or row["skill_b_key"] not in skill_keys
+    )
+    results.append(_result("DQ-02c", "Every skill_key exists in dim_skill", 0, missing_skill, BLOCK,
+                           missing_skill == 0))
+
+    missing_platform = sum(
+        1 for row in bundle.platform if row["platform_key"] not in platform_keys
+    ) + sum(1 for row in bundle.change_event if row["platform_key"] not in platform_keys)
+    results.append(_result("DQ-02d", "Every platform_key exists in dim_platform", 0, missing_platform, BLOCK,
+                           missing_platform == 0))
+
+    missing_date = sum(
+        1 for row in bundle.snapshot if row["date_key"] not in date_keys
+    ) + sum(1 for row in bundle.change_event if row["event_date_key"] not in date_keys)
+    results.append(_result("DQ-02e", "Every date_key exists in dim_date", 0, missing_date, BLOCK,
+                           missing_date == 0))
+
     # DQ-03 snapshot cohort equals the effective entity count of the release.
     results.append(_result("DQ-03", "Snapshot rows equal effective entities", entity_count, len(snapshot), BLOCK,
                            entity_count == len(snapshot)))
