@@ -14,8 +14,8 @@ Ba tầng **đã chạy được theo đường chính Bronze → Silver → Gol
 
 - **Bronze:** đường crawl, envelope, manifest, checksum, State Store, audit gate và Airflow hoạt động; runtime có 46 object Bronze, 5.376 records đăng ký, landing không còn `.uploading`. Tuy nhiên compaction chưa được lịch gọi, alert chưa bật, timeout code chưa khớp plan và runtime State Store còn 3 `ABANDONED`/9 `FAILED` lịch sử.
 - **TopCV:** đã bổ sung pacing trước burst kế tiếp và circuit breaker HTTP 403 lưu state atomically để Airflow retry không gửi request lại ngay từ process mới. 403 vẫn fail-closed; chưa thể coi TopCV healthy cho tới khi một request production thành công sau cooldown.
-- **Silver:** release `silver_release_manual_goldprep_d279d1a` vẫn có `status=COMPLETE` nhưng **không còn consumable sau khi bổ sung kiểm tra logical-key uniqueness**: 3.652 entity rows nhưng chỉ 3.077 `unified_job_id` duy nhất. Release `manual_goldprep_20261119_v2` có thêm 387/428 checksum mismatch. Đã sửa code để run mới cô lập object theo `run_id`, defer entity write đến cấp release, fail-closed khi thiếu `observed_at`, bỏ release hỏng/duplicate khỏi Gold selection và thêm regression tests. Chưa chạy lại Silver production vì chưa có xác nhận cho phép reprocess.
-- **Gold:** production load trước đó thành công với 32 DQ check đạt, active release vẫn trỏ đúng release đã load. Tuy nhiên sau khi reader được siết integrity/uniqueness, runtime hiện không chọn release Silver cũ làm consumable; vì vậy không được chạy Gold mới cho tới khi có Silver release sạch. Blocked probe chứng minh `active_release` không đổi, nhưng probe trước đây đã ghi đè `daily_snapshot`; code và control row đã được sửa.
+- **Silver:** đã replay từ 46 Bronze objects bằng code `bc10f45`, không crawl lại TopCV. Release mới `silver_release_manual_silver_replay_bc10f45` ở `COMPLETE`, 208 objects, 13.748 records; local verify 0 lỗi, remote MinIO verify 208/208 object 0 lỗi, logical-key duplicates 0, đủ 9 platform.
+- **Gold:** đã chạy no-publish và publish thật từ release mới. 32/32 DQ checks đạt; active release mới `gold_20261119_silver_release_manual_silver_replay_bc10f45`; `daily_snapshot=LOADED`.
 
 ## 2. Bằng chứng runtime đã thu được
 
@@ -23,11 +23,11 @@ Ba tầng **đã chạy được theo đường chính Bronze → Silver → Gol
 
 - `ingestion_runs`: 87 `SUCCESS`, 9 `FAILED`, 3 `ABANDONED` trong State Store hiện tại.
 - `ingestion_state`: 9 source đều có `last_run_status=SUCCESS` ở lần trạng thái mới nhất.
-- `ingestion_objects`: 46 objects, 5.376 records, khoảng 6.237.284 bytes; `is_compacted=0` là 46; `compaction_audit_logs=0`.
+- `ingestion_objects`: 50 objects, 5.435 records, khoảng 6.322.683 bytes; `is_compacted=0` là 50; `compaction_audit_logs=0`.
 - MinIO read-only probe:
   - `landing`: 0 objects, 0 `.uploading`.
   - `bronze`: 46 objects.
-  - `silver`: 1.100 objects.
+  - `silver`: 1.517 objects.
 - Airflow:
   - DAG import errors: `[]`.
   - `daily_nine_platform_bronze_incremental`: unpaused.
@@ -35,29 +35,30 @@ Ba tầng **đã chạy được theo đường chính Bronze → Silver → Gol
 
 ### Silver
 
-- Release: `silver_release_manual_goldprep_d279d1a`.
-- Manifest flag vẫn là `status=COMPLETE`, nhưng code reader mới trả `is_consumable=False` vì logical-key duplicates; không được chọn cho Gold cho tới khi reprocess tạo release sạch.
-- 456 objects trong manifest, checksum/row count vật lý cũ từng verify 0 lỗi; kiểm tra logical key mới phát hiện duplicate entities.
+- Release: `silver_release_manual_silver_replay_bc10f45`.
+- `status=COMPLETE`, `is_consumable=True`.
+- 208 objects trong manifest; local và remote MinIO checksum/size verify: 0 lỗi.
+- Logical keys: observations 5.221/5.221, entities 3.092/3.092, links 5.221/5.221, quarantine 214/214.
 - 9 platform: `careerviet`, `devwork`, `itviec`, `topcv`, `topdev`, `upzi`, `vieclam24h`, `vietnamdevs`, `vietnamworks`.
-- Manifest metrics: 5.376 observations xử lý, 5.162 valid, 214 quarantine, quarantine rate 3,9807%, 1.076 review-required links.
+- Manifest metrics: 5.435 observations xử lý, 5.221 valid, 214 quarantine, quarantine rate 3,9374%, 1.079 review-required links.
 - Object MinIO Silver tồn tại và đã được đọc kiểm tra thông qua release mirror/local mirror.
 
 ### Gold
 
-- `active_release`: `gold_20261119_silver_release_manual_goldprep_d279d1a`.
+- `active_release`: `gold_20261119_silver_release_manual_silver_replay_bc10f45`.
 - `load_run` active release: `SUCCESS`.
 - Row counts active release:
-  - `dim_job=3.077`, `dim_company=1.217`, `dim_platform=10`, `dim_skill=132`, `dim_date=2.343`.
-  - `fact_job_daily_snapshot=3.077`.
-  - `fact_job_platform_daily=3.077`.
-  - `fact_job_skill_daily=10.656`.
-  - `fact_job_change_event=95`.
-  - `fact_job_market_daily=403`.
-  - `fact_company_hiring_daily=1.191`.
+  - `dim_job=3.092`, `dim_company=1.224`, `dim_platform=10`, `dim_skill=132`, `dim_date=2.343`.
+  - `fact_job_daily_snapshot=3.092`.
+  - `fact_job_platform_daily=3.092`.
+  - `fact_job_skill_daily=10.695`.
+  - `fact_job_change_event=96`.
+  - `fact_job_market_daily=405`.
+  - `fact_company_hiring_daily=1.198`.
   - `fact_skill_pair_daily=5.201`.
 - DQ production: 32 checks, 0 failed cho active release.
 - Blocked publish probe: kết quả `BLOCKED`; active pointer trước/sau giữ nguyên.
-- Control row đã được sửa lại thành `daily_snapshot.status=LOADED`, trỏ cùng `gold_release_id` và `silver_release_id` với active successful release. Không nạp lại fact/dimension.
+- Control row đã được verify thành `daily_snapshot.status=LOADED`, trỏ cùng `gold_release_id` và `silver_release_id` với active successful release.
 
 ## 3. Các lỗi đã sửa trong đợt rà soát này
 
@@ -89,12 +90,12 @@ Ba tầng **đã chạy được theo đường chính Bronze → Silver → Gol
 
 Rà soát độc lập bằng release manifest + Parquet readback đã xác nhận:
 
-- `silver_release_manual_goldprep_20261119_v2`: 428 objects, 387 checksum mismatch, nhưng manifest cũ vẫn ghi `COMPLETE`.
-- `silver_release_manual_goldprep_d279d1a`: `entities` 3.652 rows / 3.077 unique `unified_job_id`.
+- Các release cũ vẫn được giữ nguyên làm lịch sử và không được chọn.
+- Release mới `silver_release_manual_silver_replay_bc10f45`: 208 objects, remote verify 0 lỗi; `entities` 3.092 rows / 3.092 unique `unified_job_id`.
 
 Nguyên nhân là writer chỉ dedupe trong một lần gọi `write()`; pipeline phát entity theo nhiều batch/partition nên cùng entity xuất hiện ở nhiều file. Đã sửa theo hướng defer entity write tới cuối release và kiểm tra duplicate logical key khi Gold verify release. Các release cũ không được tự ý rewrite/xóa.
 
-Do đây là dữ liệu production cần ghi thêm release/object mới, em đã dừng ở code + test và chờ xác nhận reprocess; không tự chạy lại Silver production.
+Đã reprocess sau khi có xác nhận. Vì TopCV đang HTTP 403, replay đọc Bronze objects đã commit thay vì crawl lại nguồn.
 
 ## 4. Ma trận đánh giá theo tầng
 
@@ -119,13 +120,13 @@ Do đây là dữ liệu production cần ghi thêm release/object mới, em đ�
 | Hạng mục | Đánh giá | Mức |
 |---|---|---|
 | 4 schemas và validation | Code/test có | Đạt |
-| Identity/observation preservation | Release thật có 5.162 valid observations | Đạt |
-| Entity resolution/false-positive guard | Code và tests có; 1.076 review-required được ghi | Đạt có điều kiện |
+| Identity/observation preservation | Release mới có 5.221 valid observations | Đạt |
+| Entity resolution/false-positive guard | Code và tests có; 1.079 review-required được ghi | Đạt có điều kiện |
 | Lifecycle/grace/partial-run | Có code; DAG hiện dùng ALL_SUCCESS nên partial semantics chưa là đường production chính | Đạt MVP |
-| Writer checksum/manifest | Release verify 0 lỗi | Đạt |
+| Writer checksum/manifest | Release mới local/remote verify 0 lỗi | Đạt |
 | MinIO path isolation | Đã thêm namespace cho run mới; release cũ cần giữ nguyên layout | Đạt sau sửa |
-| Airflow full handoff | DAG đã chạy thật và release COMPLETE | Đạt |
-| Gold handoff | Gold đã đọc release và publish thành công | Đạt |
+| Airflow full handoff | DAG crawl reprocess bị TopCV 403; replay từ Bronze đã tạo release COMPLETE | Đạt có điều kiện |
+| Gold handoff | Gold đã đọc release mới và publish thành công | Đạt |
 | Acceptance documentation | Plan/checklist còn chứa nhiều trạng thái “cần viết mới” cũ | **P1 tài liệu** |
 | Review queue resolution | Có pending/review-required nhưng chưa có workflow vận hành đã chứng minh | P1 |
 
@@ -134,7 +135,7 @@ Do đây là dữ liệu production cần ghi thêm release/object mới, em đ�
 | Hạng mục | Đánh giá | Mức |
 |---|---|---|
 | PostgreSQL control/schema | Đã chạy production | Đạt |
-- Release reader/checksum/row count | Đã siết fail-closed; release cũ bị loại vì duplicate logical keys | **P0 đang mở** |
+| Release reader/checksum/row count | Release mới 208 objects, remote verify 0 lỗi, logical keys unique | Đạt |
 | Dimensions/SCD2/facts | Active load SUCCESS, FK lỗi trước đây đã sửa | Đạt |
 | DQ/publish gate | 32/32 checks pass active release | Đạt |
 | Active release atomicity | Blocked probe giữ pointer cũ | Đạt sau sửa |
@@ -163,9 +164,9 @@ Do đây là dữ liệu production cần ghi thêm release/object mới, em đ�
 5. Sinh acceptance fixture thật cho `MERGED`/`SPLIT` hoặc ghi rõ đây là scenario phòng vệ chưa thể nghiệm thu bằng dữ liệu production.
 6. Có quy trình cookie/session refresh; hiện 403 sẽ fail-closed nhưng không tự khôi phục.
 
-### P0 đang mở
+### P0
 
-Đã phát hiện lỗi Silver release integrity/uniqueness nêu ở mục 3.3. Lỗi này không làm mất Bronze và không làm active Gold pointer sai, nhưng chặn production acceptance của Silver/Gold handoff cho tới khi reprocess tạo release mới sạch.
+Không còn P0 mở trong release mới. Các release Silver cũ lỗi checksum/duplicate vẫn được giữ nguyên lịch sử và bị reader loại khỏi Gold; không được dùng lại.
 
 ## 6. Vấn đề tài liệu cần chỉnh
 
@@ -192,7 +193,7 @@ Bản báo cáo này là addendum hiện trạng; không sửa lịch sử trong
 
 ## 8. Phạm vi chưa thể khẳng định
 
-- Chưa chạy lại Silver production/reprocess release vì đây là side effect ghi thêm object/manifest và cập nhật registry; đã hỏi xác nhận nhưng chưa nhận được lựa chọn.
+- Đã chạy Silver replay từ Bronze đã commit; không crawl lại TopCV do HTTP 403.
 - Chưa bật alert thật vì cần secret/channel approval; không đoán credential.
 - Chưa chạy compaction production vì là thao tác thay đổi object lifecycle.
 - Chưa chạy lại DDL production hoặc `mark_missing_day`, theo yêu cầu đã chốt.
