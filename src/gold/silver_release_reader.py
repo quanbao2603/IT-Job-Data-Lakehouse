@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
@@ -170,7 +172,10 @@ def load_historical_release_data(
     root: str | Path,
     current_release: SilverRelease,
     current_observations: Iterable[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], set[str], int]:
+    *,
+    strict: Optional[bool] = None,
+    lookback_days: Optional[int] = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], set[str], int, dict[str, Any]]:
     """Read verified prior observation/link history for change-event detection.
 
     A Gold release normally contains the current bounded Silver snapshot only.  Fact 4
@@ -181,26 +186,55 @@ def load_historical_release_data(
     """
     release_dir = Path(root) / "releases"
     if not release_dir.exists():
-        return [], [], set(), 0
+        return [], [], set(), 0, {"skipped_releases": [], "lookback_days": lookback_days}
+    if strict is None:
+        strict = os.getenv("GOLD_HISTORY_STRICT", "true").strip().lower() != "false"
+    if lookback_days is None:
+        lookback_days = int(os.getenv("GOLD_HISTORY_LOOKBACK_DAYS", "90"))
+    if lookback_days < 1:
+        raise ValueError("GOLD_HISTORY_LOOKBACK_DAYS must be >= 1")
     current_cutoff = parse_utc(current_release.snapshot_cutoff_at)
+    if current_cutoff is None:
+        raise ValueError(f"Unparseable current Silver cutoff: {current_release.snapshot_cutoff_at}")
+    history_floor = current_cutoff - timedelta(days=lookback_days)
     prior_releases: list[SilverRelease] = []
+    skipped_releases: list[dict[str, Any]] = []
     for path in sorted(release_dir.glob("*.json")):
         if path.stem == current_release.release_id:
             continue
         try:
             candidate = load_release(root, path.stem)
-        except (KeyError, json.JSONDecodeError, FileNotFoundError):
+        except (KeyError, json.JSONDecodeError, FileNotFoundError) as exc:
+            if strict:
+                raise ValueError(f"historical Silver release {path.stem} is malformed: {exc}") from exc
+            skipped_releases.append({"release_id": path.stem, "reason": f"MALFORMED:{type(exc).__name__}"})
             continue
         candidate_cutoff = parse_utc(candidate.snapshot_cutoff_at)
-        if not candidate.is_consumable or candidate_cutoff is None:
+        if candidate_cutoff is None:
+            if strict:
+                raise ValueError(f"historical Silver release {candidate.release_id} has no valid cutoff")
+            skipped_releases.append({"release_id": candidate.release_id, "reason": "UNPARSEABLE_CUTOFF"})
+            continue
+        if candidate_cutoff < history_floor:
+            skipped_releases.append({"release_id": candidate.release_id, "reason": "LOOKBACK_LIMIT"})
+            continue
+        if not candidate.is_consumable:
+            skipped_releases.append({"release_id": candidate.release_id, "reason": "NOT_CONSUMABLE"})
             continue
         if current_cutoff is not None and candidate_cutoff >= current_cutoff:
             continue
         problems = verify_release(candidate, root)
         if problems:
-            raise ValueError(
-                f"historical Silver release {candidate.release_id} verification failed: {problems[:5]}"
-            )
+            if strict:
+                raise ValueError(
+                    f"historical Silver release {candidate.release_id} verification failed: {problems[:5]}"
+                )
+            skipped_releases.append({
+                "release_id": candidate.release_id,
+                "reason": "VERIFY_FAILED",
+                "problems": problems[:5],
+            })
+            continue
         prior_releases.append(candidate)
     prior_releases.sort(key=lambda item: (item.snapshot_cutoff_at, item.release_id))
     historical_observations: list[dict[str, Any]] = []
@@ -227,7 +261,11 @@ def load_historical_release_data(
                 and observed_at <= previous_cutoff
             ):
                 late_ids.add(observation_id)
-    return historical_observations, historical_links, late_ids, len(prior_releases)
+    return historical_observations, historical_links, late_ids, len(prior_releases), {
+        "strict": bool(strict),
+        "lookback_days": lookback_days,
+        "skipped_releases": skipped_releases,
+    }
 
 
 def _conflict(conflict_type: str, identifier: str, detail: dict[str, Any]) -> dict[str, Any]:
@@ -333,22 +371,75 @@ def build_effective_entity(
     richer and is written by the resolver inside the same transaction. The Parquet
     entities dataset is the published copy used for reconciliation and lineage.
     """
-    rows: dict[str, dict[str, Any]] = {}
+    candidates_by_id: dict[str, list[dict[str, Any]]] = {}
     conflicts: list[dict[str, Any]] = []
     for entity in entities:
         unified_job_id = str(entity.get("unified_job_id") or "")
         if not unified_job_id:
             conflicts.append(_conflict("MISSING_UNIFIED_JOB_ID", "unknown", dict(entity)))
             continue
-        if unified_job_id in rows:
-            conflicts.append(_conflict("DUP_ENTITY", unified_job_id, {"source_object_key": object_key}))
-            continue
-        rows[unified_job_id] = {**dict(entity), "source_object_key": object_key}
+        candidates_by_id.setdefault(unified_job_id, []).append(
+            {**dict(entity), "source_object_key": object_key}
+        )
 
-    if registry_entities is not None:
-        registry_by_id = {str(row["unified_job_id"]): row for row in registry_entities}
-        for unified_job_id, row in rows.items():
-            registry_row = registry_by_id.get(unified_job_id)
+    registry_supplied = registry_entities is not None
+    registry_by_id = {
+        str(row["unified_job_id"]): row for row in (registry_entities or ())
+    }
+    rows: dict[str, dict[str, Any]] = {}
+    comparable_fields = (
+        "canonical_title", "canonical_company", "canonical_location",
+        "canonical_salary_min_vnd", "canonical_salary_max_vnd",
+        "canonical_description", "entity_status",
+    )
+    for unified_job_id, candidates in candidates_by_id.items():
+        registry_row = registry_by_id.get(unified_job_id)
+
+        def registry_score(candidate: dict[str, Any]) -> int:
+            if registry_row is None:
+                return 0
+            registry_fields = {
+                "canonical_title": "canonical_title",
+                "canonical_company": "canonical_company",
+                "canonical_location": "canonical_city",
+                "canonical_salary_min_vnd": "canonical_salary_min_vnd",
+                "canonical_salary_max_vnd": "canonical_salary_max_vnd",
+                "canonical_description": "canonical_description",
+                "entity_status": "entity_status",
+            }
+            return sum(
+                candidate.get(field) == _row_value(registry_row, registry_field)
+                for field, registry_field in registry_fields.items()
+            )
+
+        def candidate_sort_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
+            updated = parse_utc(candidate.get("canonical_updated_at"))
+            return (
+                registry_score(candidate),
+                updated is not None,
+                updated or parse_utc("1970-01-01T00:00:00Z"),
+                int(candidate.get("observation_count") or 0),
+                str(candidate.get("source_object_key") or ""),
+            )
+
+        ordered = sorted(candidates, key=candidate_sort_key, reverse=True)
+        row = ordered[0]
+        if len(candidates) > 1:
+            semantic_values = {
+                tuple(candidate.get(field) for field in comparable_fields)
+                for candidate in candidates
+            }
+            registry_resolved = registry_row is not None and (
+                registry_score(ordered[0]) > registry_score(ordered[-1])
+            )
+            if not registry_supplied or (len(semantic_values) > 1 and not registry_resolved):
+                conflicts.append(_conflict("DUP_ENTITY", unified_job_id, {
+                    "source_object_key": object_key,
+                    "candidate_count": len(candidates),
+                }))
+        rows[unified_job_id] = row
+
+        if registry_supplied:
             if registry_row is None:
                 conflicts.append(_conflict("SOURCE_DIVERGENCE", unified_job_id,
                                            {"reason": "present in Parquet, absent in registry"}))

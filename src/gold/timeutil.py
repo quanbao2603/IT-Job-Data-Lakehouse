@@ -24,7 +24,10 @@ def parse_utc(value: Optional[str]) -> Optional[datetime]:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        # Silver crawler timestamps without an offset are local reporting-time
+        # values.  Treating them as UTC shifts the cutoff by seven hours and
+        # incorrectly classifies fresh records as FUTURE_OBSERVATION.
+        parsed = parsed.replace(tzinfo=_TZ)
     return parsed.astimezone(timezone.utc)
 
 

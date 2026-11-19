@@ -189,6 +189,22 @@ class TestBronzeToSilverPipeline(unittest.TestCase):
             )
             self.assertNotEqual(registry.get_entity(old_entity)["entity_status"], "CLOSED")
 
+    def test_entity_output_counts_current_batch_observation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = EntityRegistry(str(Path(tmp) / "state.db"))
+            pipeline = BronzeToSilverPipeline(
+                registry=registry,
+                writer=SilverWriter(str(Path(tmp) / "silver")),
+                run_id="run-counts",
+                pending_review_path=str(Path(tmp) / "pending_review.csv"),
+            )
+            report = pipeline.process([self._envelope(job_id="new-counted")], partial_run=True)
+            entity_files = list((Path(tmp) / "silver" / "entities").rglob("*.parquet"))
+            rows = pq.read_table(entity_files[0]).to_pylist()
+            self.assertEqual(report["metrics"]["valid_observations"], 1)
+            self.assertEqual(rows[0]["observation_count"], 1)
+            self.assertEqual(rows[0]["source_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

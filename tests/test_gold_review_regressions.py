@@ -8,6 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.gold.load_facts import build_change_events
+from src.gold.release_controller import load_bundle
 from src.gold.silver_release_reader import (
     SilverRelease,
     build_effective_link,
@@ -16,6 +17,65 @@ from src.gold.silver_release_reader import (
 
 
 class TestGoldReviewRegressions(unittest.TestCase):
+    def test_load_bundle_deletes_dependent_facts_before_snapshot(self):
+        class Cursor:
+            def __init__(self):
+                self.sql = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def execute(self, statement, params=None):
+                self.sql.append(statement)
+
+            def executemany(self, statement, rows):
+                self.sql.append(statement)
+
+        class Connection:
+            def __init__(self):
+                self.cursor_instance = Cursor()
+
+            def cursor(self):
+                return self.cursor_instance
+
+            def commit(self):
+                pass
+
+        class Bundle:
+            gold_release_id = "gold-test"
+            silver_release_id = "silver-test"
+            dim_job_closes = []
+            dim_date = []
+            dim_platform = []
+            dim_company = []
+            dim_skill = []
+            dim_job = []
+            snapshot = []
+            platform = []
+            skill = []
+            change_event = []
+            market = []
+            company = []
+            skill_pair = []
+            effective_entity = []
+            effective_link = []
+            source_observation = []
+            conflicts = []
+
+        connection = Connection()
+        load_bundle(connection, Bundle(), include_staging=False)
+        deletes = [
+            sql for sql in connection.cursor_instance.sql
+            if sql.startswith("DELETE FROM gold.fact_")
+        ]
+        self.assertLess(
+            deletes.index("DELETE FROM gold.fact_job_platform_daily WHERE gold_release_id = %s"),
+            deletes.index("DELETE FROM gold.fact_job_daily_snapshot WHERE gold_release_id = %s"),
+        )
+
     def test_resolution_version_is_numeric_when_timestamps_tie(self):
         links = [
             {
@@ -83,7 +143,7 @@ class TestGoldReviewRegressions(unittest.TestCase):
                 "observation_id": "obs-late", "platform": "itviec", "source_job_id": "1",
                 "observed_at": "2026-11-15T03:00:00Z",
             }
-            historical, links, late_ids, count = load_historical_release_data(
+            historical, links, late_ids, count, audit = load_historical_release_data(
                 root, current, [late]
             )
             self.assertEqual(count, 1)

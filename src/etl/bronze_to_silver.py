@@ -135,11 +135,11 @@ class BronzeToSilverPipeline:
         entity = self.registry.get_entity(entity_id)
         if entity is None:
             raise ValueError(f"Resolved entity not found in registry: {entity_id}")
-        observations = self.registry.list_observations(entity_id)
+        observations = [dict(row) for row in self.registry.list_observations(entity_id)]
+        if not any(row.get("observation_id") == record.get("observation_id") for row in observations):
+            observations.append(dict(record))
         platforms = {row["platform"] for row in observations}
-        canonical = choose_canonical(
-            [record] + [dict(row) for row in observations if row["observation_id"] != record["observation_id"]]
-        )
+        canonical = choose_canonical(observations)
         canonical_posted_date = canonical.get("posted_date") or record.get("posted_date") or entity["first_seen_at"][:10]
         entity_row = {
             "unified_job_id": entity_id,
@@ -444,10 +444,28 @@ class BronzeToSilverPipeline:
                 self._write_dataset("entity_links", rows, partition)
         if entities:
             entity_rows = list(entities.values())
+            current_observations_by_entity: dict[str, list[dict[str, Any]]] = {}
+            for current_record in observations:
+                result_link = next(
+                    (link for link in links if link.get("observation_id") == current_record.get("observation_id")),
+                    None,
+                )
+                current_entity_id = (result_link or {}).get("unified_job_id")
+                if current_entity_id:
+                    current_observations_by_entity.setdefault(str(current_entity_id), []).append(current_record)
             for entity in entity_rows:
-                entity_observations = self.registry.list_observations(entity["unified_job_id"])
+                entity_observations = [
+                    dict(row) for row in self.registry.list_observations(entity["unified_job_id"])
+                ]
+                known_observation_ids = {row.get("observation_id") for row in entity_observations}
+                entity_observations.extend(
+                    row for row in current_observations_by_entity.get(entity["unified_job_id"], [])
+                    if row.get("observation_id") not in known_observation_ids
+                )
+                entity["observation_count"] = len(entity_observations)
+                entity["source_count"] = len({row.get("platform") for row in entity_observations})
                 canonical = choose_canonical(
-                    [dict(row) for row in entity_observations if row["quality_accepted"]]
+                    [row for row in entity_observations if row.get("quality_accepted", True)]
                 ) if entity_observations else None
                 if canonical:
                     entity["canonical_posted_date"] = canonical.get("posted_date") or entity["canonical_posted_date"]

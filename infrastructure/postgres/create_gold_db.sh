@@ -37,12 +37,14 @@ GRANT CREATE ON DATABASE lakehouse TO gold_writer;
 CREATE SCHEMA IF NOT EXISTS gold AUTHORIZATION gold_writer;
 CREATE SCHEMA IF NOT EXISTS gold_control AUTHORIZATION gold_writer;
 CREATE SCHEMA IF NOT EXISTS gold_staging AUTHORIZATION gold_writer;
-GRANT USAGE ON SCHEMA gold, gold_control, gold_staging TO gold_reader;
-ALTER DEFAULT PRIVILEGES FOR ROLE gold_writer IN SCHEMA gold, gold_control, gold_staging
+GRANT USAGE ON SCHEMA gold, gold_control TO gold_reader;
+REVOKE USAGE ON SCHEMA gold_staging FROM gold_reader;
+REVOKE SELECT ON ALL TABLES IN SCHEMA gold_staging FROM gold_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE gold_writer IN SCHEMA gold, gold_control
     GRANT SELECT ON TABLES TO gold_reader;
-ALTER DEFAULT PRIVILEGES FOR ROLE gold_writer IN SCHEMA gold, gold_control, gold_staging
+ALTER DEFAULT PRIVILEGES FOR ROLE gold_writer IN SCHEMA gold, gold_control
     GRANT USAGE, SELECT ON SEQUENCES TO gold_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA gold, gold_control, gold_staging TO gold_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA gold, gold_control TO gold_reader;
 SQL
 
 printf '%s\n' 'Gold database and roles are ready; apply src/gold/ddl.sql with gold_writer next.'

@@ -141,6 +141,7 @@ def build_bundle(
     historical_links: list[dict[str, Any]] = []
     late_observation_ids: set[str] = set()
     historical_release_count = 0
+    historical_report: dict[str, Any] = {"skipped_releases": [], "lookback_days": None}
     if release is not None:
         if not release.is_consumable:
             raise ValueError(
@@ -159,6 +160,7 @@ def build_bundle(
             historical_links,
             late_observation_ids,
             historical_release_count,
+            historical_report,
         ) = load_historical_release_data(root, release, observations)
         resolved_cutoff = release.snapshot_cutoff_at
         resolved_silver_release = release.release_id
@@ -286,6 +288,13 @@ def build_bundle(
         reports["change_event_scope"] = "release_only"
     reports["historical_release_count"] = historical_release_count
     reports["late_observation_count"] = len(late_observation_ids)
+    reports["historical_release_audit"] = historical_report
+    for skipped in historical_report.get("skipped_releases", []):
+        conflicts.append({
+            "conflict_type": "HISTORICAL_RELEASE_SKIPPED",
+            "identifier": str(skipped.get("release_id") or "unknown"),
+            "detail": skipped,
+        })
     bundle.change_event = build_change_events(
         event_observations, dim_job_by_entity,
         gold_release_id=active_release_id, silver_release_id=resolved_silver_release,

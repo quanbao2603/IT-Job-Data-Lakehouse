@@ -147,6 +147,18 @@ LOAD_ORDER: tuple[str, ...] = (
     "gold.fact_company_hiring_daily", "gold.fact_skill_pair_daily",
 )
 
+# Delete children before their release-scoped parent rows. PostgreSQL enforces the
+# composite FKs from platform/skill facts to fact_job_daily_snapshot during retries.
+FACT_DELETE_ORDER: tuple[str, ...] = (
+    "gold.fact_skill_pair_daily",
+    "gold.fact_company_hiring_daily",
+    "gold.fact_job_market_daily",
+    "gold.fact_job_change_event",
+    "gold.fact_job_skill_daily",
+    "gold.fact_job_platform_daily",
+    "gold.fact_job_daily_snapshot",
+)
+
 
 def _jsonb(value: Any) -> Optional[str]:
     if value is None:
@@ -195,13 +207,17 @@ def load_bundle(connection: Any, bundle: Any, *, include_staging: bool = True) -
                 (job_key_row["valid_to_release"], job_key_row["valid_to_at"], job_key_row["job_key"]),
             )
             counts["gold.dim_job_closed"] = counts.get("gold.dim_job_closed", 0) + 1
+        for table in FACT_DELETE_ORDER:
+            cursor.execute(f"DELETE FROM {table} WHERE gold_release_id = %s", (bundle.gold_release_id,))
         for table in LOAD_ORDER:
             columns, conflict = (DIM_SPECS.get(table) or FACT_SPECS[table])
             rows = getattr(bundle, BUNDLE_MAP[table])
             if table in FACT_SPECS:
-                # Facts are addressed by release, so a retry replaces exactly its own rows.
-                cursor.execute(f"DELETE FROM {table} WHERE gold_release_id = %s", (bundle.gold_release_id,))
-            counts[table] = _upsert(cursor, table, columns, conflict, rows)
+                # Facts were deleted in dependency order above; this upsert is now safe
+                # for a retry even when composite child FKs reference the snapshot.
+                counts[table] = _upsert(cursor, table, columns, conflict, rows)
+            else:
+                counts[table] = _upsert(cursor, table, columns, conflict, rows)
 
         if include_staging:
             columns, conflict = STAGING_SPECS["gold_staging.effective_entity"]
