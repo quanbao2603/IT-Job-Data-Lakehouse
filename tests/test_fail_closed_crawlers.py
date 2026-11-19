@@ -71,11 +71,35 @@ class TestFailClosedCrawlers(unittest.TestCase):
     def test_http_403_is_blocked_without_retry(self):
         crawler = TopCVCrawler.__new__(TopCVCrawler)
         crawler.source_name = "topcv"
+        crawler.cooldown_state_path = os.path.join(self.db_path + ".topcv-cooldown.json")
         crawler.session = SimpleNamespace(
             get=lambda *_args, **_kwargs: SimpleNamespace(status_code=403)
         )
         with self.assertRaisesRegex(CrawlerSourceError, "HTTP 403"):
             crawler._make_request("https://example.invalid/listing")
+        self.assertTrue(os.path.exists(crawler.cooldown_state_path))
+
+    def test_http_403_cooldown_is_shared_across_new_crawler_process(self):
+        state_path = os.path.join(self.db_path + ".topcv-cooldown.json")
+        first = TopCVCrawler.__new__(TopCVCrawler)
+        first.source_name = "topcv"
+        first.cooldown_state_path = state_path
+        first.session = SimpleNamespace(
+            get=lambda *_args, **_kwargs: SimpleNamespace(status_code=403)
+        )
+        with self.assertRaises(CrawlerSourceError):
+            first._make_request("https://example.invalid/listing")
+
+        calls = []
+        second = TopCVCrawler.__new__(TopCVCrawler)
+        second.source_name = "topcv"
+        second.cooldown_state_path = state_path
+        second.session = SimpleNamespace(
+            get=lambda *_args, **_kwargs: calls.append(1)
+        )
+        with self.assertRaisesRegex(CrawlerSourceError, "cooldown active"):
+            second._make_request("https://example.invalid/listing")
+        self.assertEqual(calls, [])
 
     def test_topcv_uses_working_cloudflare_impersonation_profile(self):
         crawler = TopCVCrawler.__new__(TopCVCrawler)
@@ -88,7 +112,7 @@ class TestFailClosedCrawlers(unittest.TestCase):
             crawler._create_session()
         session_factory.assert_called_once_with(impersonate="chrome120")
 
-    def test_topcv_cools_down_after_two_requests(self):
+    def test_topcv_cools_down_before_next_burst(self):
         crawler = TopCVCrawler.__new__(TopCVCrawler)
         crawler.source_name = "topcv"
         calls = []
@@ -105,7 +129,8 @@ class TestFailClosedCrawlers(unittest.TestCase):
         ), patch("src.crawlers.topcv_crawler.time.sleep") as sleep:
             self.assertEqual(crawler._make_request("https://example.invalid/1"), "ok")
             self.assertEqual(crawler._make_request("https://example.invalid/2"), "ok")
-        self.assertEqual(len(calls), 2)
+            self.assertEqual(crawler._make_request("https://example.invalid/3"), "ok")
+        self.assertEqual(len(calls), 3)
         sleep.assert_called_once_with(30.0)
 
     def test_empty_listing_with_source_total_is_parser_failure(self):

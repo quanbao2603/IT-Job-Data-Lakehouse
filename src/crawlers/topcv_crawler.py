@@ -5,6 +5,8 @@ import time
 import random
 import argparse
 import hashlib
+import json
+import tempfile
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Iterator
 
@@ -34,6 +36,7 @@ class TopCVCrawler(BaseCrawler):
     REQUESTS_BEFORE_COOLDOWN_MAX = 2
     COOLDOWN_MIN = 30.0
     COOLDOWN_MAX = 60.0
+    BLOCKED_COOLDOWN_SECONDS = 15 * 60
 
     def __init__(self, **kwargs):
         super().__init__(source_name="topcv", **kwargs)
@@ -41,6 +44,10 @@ class TopCVCrawler(BaseCrawler):
         self.session = self._create_session()
         self._requests_since_cooldown = 0
         self._next_cooldown_after = self._choose_next_cooldown()
+        self.cooldown_state_path = os.environ.get(
+            "LAKEHOUSE_TOPCV_COOLDOWN_STATE",
+            os.path.join("data", "operational", "topcv_cooldown.json"),
+        )
 
     def _choose_next_cooldown(self) -> int:
         return random.randint(self.REQUESTS_BEFORE_COOLDOWN_MIN, self.REQUESTS_BEFORE_COOLDOWN_MAX)
@@ -58,6 +65,74 @@ class TopCVCrawler(BaseCrawler):
             time.sleep(pause)
             self._requests_since_cooldown = 0
             self._next_cooldown_after = self._choose_next_cooldown()
+
+    def _read_cooldown_state(self) -> Dict[str, Any]:
+        path = getattr(
+            self,
+            "cooldown_state_path",
+            os.environ.get(
+                "LAKEHOUSE_TOPCV_COOLDOWN_STATE",
+                os.path.join("data", "operational", "topcv_cooldown.json"),
+            ),
+        )
+        try:
+            with open(path, encoding="utf-8") as stream:
+                payload = json.load(stream)
+            return payload if isinstance(payload, dict) else {}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def _write_cooldown_state(self, payload: Dict[str, Any]) -> None:
+        path = getattr(
+            self,
+            "cooldown_state_path",
+            os.environ.get(
+                "LAKEHOUSE_TOPCV_COOLDOWN_STATE",
+                os.path.join("data", "operational", "topcv_cooldown.json"),
+            ),
+        )
+        directory = os.path.dirname(os.path.abspath(path))
+        os.makedirs(directory, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".topcv-cooldown-", dir=directory, text=True)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream, ensure_ascii=False, sort_keys=True)
+                stream.write("\n")
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def _assert_not_blocked(self) -> None:
+        state = self._read_cooldown_state()
+        blocked_until = float(state.get("blocked_until", 0) or 0)
+        if blocked_until > time.time():
+            remaining = int(blocked_until - time.time())
+            raise CrawlerSourceError(
+                f"{self.source_name} cooldown active for HTTP 403 ({remaining}s remaining); no request sent"
+            )
+
+    def _activate_block_cooldown(self) -> None:
+        now = time.time()
+        self._write_cooldown_state(
+            {
+                "source": self.source_name,
+                "reason": "HTTP_403",
+                "blocked_at": now,
+                "blocked_until": now + self.BLOCKED_COOLDOWN_SECONDS,
+            }
+        )
+        self._requests_since_cooldown = 0
+        raise CrawlerSourceError(
+            f"{self.source_name} request returned HTTP 403; "
+            f"circuit breaker active for {self.BLOCKED_COOLDOWN_SECONDS}s"
+        )
+
+    def _clear_block_cooldown(self) -> None:
+        state = self._read_cooldown_state()
+        if state.get("blocked_until"):
+            self._write_cooldown_state({})
 
     def _load_cookie(self) -> str:
         candidates = [
@@ -101,30 +176,46 @@ class TopCVCrawler(BaseCrawler):
     def _make_request(self, url: str, max_retries: int = 4, base_backoff: float = 3.0) -> Optional[str]:
         for attempt in range(max_retries):
             try:
+                # The burst limiter runs before the next request. A 403 also
+                # persists a circuit breaker so Airflow retries cannot hammer
+                # TopCV again from a fresh Python process.
+                self._assert_not_blocked()
+                if getattr(self, "_requests_since_cooldown", 0) >= getattr(
+                    self, "_next_cooldown_after", self.REQUESTS_BEFORE_COOLDOWN_MAX
+                ):
+                    pause = random.uniform(self.COOLDOWN_MIN, self.COOLDOWN_MAX)
+                    print(f"      [~] TopCV nghỉ trước burst tiếp theo {pause:.1f}s.")
+                    time.sleep(pause)
+                    self._requests_since_cooldown = 0
+                    self._next_cooldown_after = self._choose_next_cooldown()
                 resp = self.session.get(url, timeout=20)
-                self._pace_after_request()
 
                 if resp.status_code == 200:
+                    self._requests_since_cooldown = getattr(self, "_requests_since_cooldown", 0) + 1
+                    self._clear_block_cooldown()
                     return resp.text
 
                 if resp.status_code == 429:
+                    self._requests_since_cooldown = getattr(self, "_requests_since_cooldown", 0) + 1
                     sleep_time = (base_backoff * (2 ** attempt)) + random.uniform(1.0, 3.0)
                     print(f"      [!] Bị giới hạn tốc độ (HTTP 429), ngủ {sleep_time:.1f}s trước khi thử lại...")
                     time.sleep(sleep_time)
                     continue
 
                 if resp.status_code == 403:
-                    raise CrawlerSourceError(f"{self.source_name} request returned HTTP 403")
+                    self._activate_block_cooldown()
 
                 if resp.status_code in [404, 410]:
                     print(f"      [-] Tin không tồn tại hoặc đã đóng (HTTP {resp.status_code})")
                     return None
 
                 if resp.status_code in [500, 502, 503, 504]:
+                    self._requests_since_cooldown = getattr(self, "_requests_since_cooldown", 0) + 1
                     time.sleep(2.0 + attempt)
                     continue
 
                 print(f"      [-] HTTP {resp.status_code} khi tải {url}")
+                self._requests_since_cooldown = getattr(self, "_requests_since_cooldown", 0) + 1
                 time.sleep(1.5 + attempt)
 
             except Exception as e:

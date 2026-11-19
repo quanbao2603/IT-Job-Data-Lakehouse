@@ -13,6 +13,7 @@ Ba tầng **đã chạy được theo đường chính Bronze → Silver → Gol
 ### Trạng thái hiện tại
 
 - **Bronze:** đường crawl, envelope, manifest, checksum, State Store, audit gate và Airflow hoạt động; runtime có 46 object Bronze, 5.376 records đăng ký, landing không còn `.uploading`. Tuy nhiên compaction chưa được lịch gọi, alert chưa bật, timeout code chưa khớp plan và runtime State Store còn 3 `ABANDONED`/9 `FAILED` lịch sử.
+- **TopCV:** đã bổ sung pacing trước burst kế tiếp và circuit breaker HTTP 403 lưu state atomically để Airflow retry không gửi request lại ngay từ process mới. 403 vẫn fail-closed; chưa thể coi TopCV healthy cho tới khi một request production thành công sau cooldown.
 - **Silver:** release `silver_release_manual_goldprep_d279d1a` vẫn có `status=COMPLETE` nhưng **không còn consumable sau khi bổ sung kiểm tra logical-key uniqueness**: 3.652 entity rows nhưng chỉ 3.077 `unified_job_id` duy nhất. Release `manual_goldprep_20261119_v2` có thêm 387/428 checksum mismatch. Đã sửa code để run mới cô lập object theo `run_id`, defer entity write đến cấp release, fail-closed khi thiếu `observed_at`, bỏ release hỏng/duplicate khỏi Gold selection và thêm regression tests. Chưa chạy lại Silver production vì chưa có xác nhận cho phép reprocess.
 - **Gold:** production load trước đó thành công với 32 DQ check đạt, active release vẫn trỏ đúng release đã load. Tuy nhiên sau khi reader được siết integrity/uniqueness, runtime hiện không chọn release Silver cũ làm consumable; vì vậy không được chạy Gold mới cho tới khi có Silver release sạch. Blocked probe chứng minh `active_release` không đổi, nhưng probe trước đây đã ghi đè `daily_snapshot`; code và control row đã được sửa.
 
@@ -183,7 +184,7 @@ Bản báo cáo này là addendum hiện trạng; không sửa lịch sử trong
   - blocked snapshot không overwrite `LOADED`: pass.
   - missing snapshot không overwrite `LOADED`: pass.
   - Silver run namespace ngăn object overwrite: pass.
-- Full suite sau các sửa mới: **292 tests, OK (skipped=2)**.
+- Full suite sau các sửa mới: **293 tests, OK (skipped=2)**.
 - `py_compile` toàn bộ `src/etl`, `src/storage`, `src/utils`, `src/gold`, `dags`: pass.
 - `bash -n infrastructure/postgres/create_gold_db.sh`: pass.
 - `git diff --check`: pass tại thời điểm tạo báo cáo.
