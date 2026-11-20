@@ -34,6 +34,7 @@ def build_gold_release(
     gold_release_id: Optional[str] = None,
     publish: bool = True,
     apply_schema: bool = True,
+    mark_missing_day_on_missing: bool = True,
 ) -> dict[str, Any]:
     """Run the whole Gold path: read release, build bundle, gate on DQ, publish."""
     from src.gold.connection import apply_ddl, connect
@@ -55,11 +56,15 @@ def build_gold_release(
     release = latest_release(silver_root)
     if release is None:
         # A day without a valid Silver release is MISSING; it is never published as zeros.
-        result = {
+        result: dict[str, Any] = {
             "status": "MISSING",
             "reason": "no consumable Silver release (COMPLETE, not partial, no failed platform)",
             "silver_root": silver_root,
         }
+        if not mark_missing_day_on_missing:
+            result["daily_snapshot_recorded"] = False
+            result["database_mutation_skipped"] = True
+            return result
         try:
             connection = connect()
         except Exception as exc:  # noqa: BLE001 - a missing DB must not hide the MISSING day
@@ -142,6 +147,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--gold-release-id", default=None)
     parser.add_argument("--no-publish", action="store_true", help="build and gate only")
     parser.add_argument("--no-schema", action="store_true", help="assume DDL already applied")
+    parser.add_argument(
+        "--no-mark-missing-day",
+        action="store_true",
+        help="do not mutate daily_snapshot when no consumable Silver release exists",
+    )
     args = parser.parse_args(argv)
 
     result = build_gold_release(
@@ -150,6 +160,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         gold_release_id=args.gold_release_id,
         publish=not args.no_publish,
         apply_schema=not args.no_schema,
+        mark_missing_day_on_missing=not args.no_mark_missing_day,
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, default=str))
     return 0 if result.get("status") == "PUBLISHED" else 1

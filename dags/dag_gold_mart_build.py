@@ -19,33 +19,50 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.utils.trigger_rule import TriggerRule
 
-def _flag_from_environment(name: str, default: str = "false") -> bool:
-    """Read a boolean flag from the process env, falling back to the Airflow env file.
+def _runtime_environment() -> dict[str, str]:
+    """Pass the Airflow service env file to the Gold subprocess.
 
-    The Bronze DAG needs the same fallback, which tells us the systemd unit does not
-    always export ~/airflow/airflow.env into the worker process. Without this, Gold
-    would stay silently DISABLED even after the operator set the flag.
+    The scheduler's task worker may not retain ``EnvironmentFile`` variables after
+    Airflow forks the LocalExecutor task process. Loading the same file here keeps
+    the subprocess on the configured PostgreSQL endpoint/password without printing
+    or storing any secret in the DAG code.
     """
-    value = os.environ.get(name)
-    if value is None:
-        env_path = os.environ.get("LAKEHOUSE_AIRFLOW_ENV", "/home/womcloud/airflow/airflow.env")
-        try:
-            with open(env_path, encoding="utf-8") as handle:
-                for line in handle:
-                    key, separator, raw_value = line.partition("=")
-                    if separator and key.strip() == name:
-                        value = raw_value.strip().strip("\"'")
-                        break
-        except OSError:
-            value = None
-    return str(value or default).lower() == "true"
+    env = os.environ.copy()
+    env_path = env.get("LAKEHOUSE_AIRFLOW_ENV", "/home/womcloud/airflow/airflow.env")
+    try:
+        with open(env_path, encoding="utf-8") as handle:
+            for line in handle:
+                key, separator, raw_value = line.partition("=")
+                if not separator or not key.strip() or key.lstrip().startswith("#"):
+                    continue
+                value = raw_value.strip()
+                if (value.startswith('"') and value.endswith('"')) or (
+                    value.startswith("'") and value.endswith("'")
+                ):
+                    value = value[1:-1]
+                env[key.strip()] = value
+    except OSError:
+        pass
+    return env
 
 
-PROJECT_ROOT = os.environ.get("LAKEHOUSE_PROJECT_ROOT", "/home/womcloud/IT-Job-Data-Lakehouse")
-PYTHON = os.environ.get("LAKEHOUSE_PYTHON", f"{PROJECT_ROOT}/lakehouse_env/bin/python")
-STATE_DB = os.environ.get("LAKEHOUSE_STATE_DB_PATH", f"{PROJECT_ROOT}/data/state_store.db")
-SILVER_ROOT = os.environ.get("LAKEHOUSE_SILVER_ROOT", f"{PROJECT_ROOT}/data/silver")
-GOLD_ENABLED = _flag_from_environment("LAKEHOUSE_GOLD_ENABLED")
+_PROCESS_ENV = _runtime_environment()
+PROJECT_ROOT = _PROCESS_ENV.get("LAKEHOUSE_PROJECT_ROOT", "/home/womcloud/IT-Job-Data-Lakehouse")
+PYTHON = _PROCESS_ENV.get("LAKEHOUSE_PYTHON", f"{PROJECT_ROOT}/lakehouse_env/bin/python")
+STATE_DB = _PROCESS_ENV.get("LAKEHOUSE_STATE_DB_PATH", f"{PROJECT_ROOT}/data/state_store.db")
+SILVER_ROOT = _PROCESS_ENV.get("LAKEHOUSE_SILVER_ROOT", f"{PROJECT_ROOT}/data/silver")
+GOLD_ENABLED = str(_PROCESS_ENV.get("LAKEHOUSE_GOLD_ENABLED", "false")).lower() == "true"
+
+
+def _gold_command() -> list[str]:
+    """Build the production command without rerunning already-applied DDL."""
+    return [
+        PYTHON, "-m", "src.gold.run_gold_mart",
+        "--silver-root", SILVER_ROOT,
+        "--state-db", STATE_DB,
+        "--no-schema",
+        "--no-mark-missing-day",
+    ]
 
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -83,13 +100,9 @@ def _gold_build(**context: Any) -> Dict[str, Any]:
     if preflight.get("status") == "DISABLED":
         print(json.dumps(preflight, ensure_ascii=False, sort_keys=True))
         return preflight
-    env = os.environ.copy()
+    env = _runtime_environment()
     env.update({"PYTHONUNBUFFERED": "1", "PYTHONPATH": PROJECT_ROOT})
-    command = [
-        PYTHON, "-m", "src.gold.run_gold_mart",
-        "--silver-root", SILVER_ROOT,
-        "--state-db", STATE_DB,
-    ]
+    command = _gold_command()
     process = subprocess.Popen(
         command, cwd=PROJECT_ROOT, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,

@@ -25,6 +25,42 @@ class TestDagContract(unittest.TestCase):
             with patch.dict(os.environ, {"LAKEHOUSE_AIRFLOW_ENV": env_path}, clear=True):
                 self.assertTrue(silver_enabled_from_environment())
 
+    def test_gold_subprocess_reads_database_env_file(self):
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+
+        from dags.dag_gold_mart_build import _runtime_environment
+
+        with TemporaryDirectory() as tmp:
+            env_path = os.path.join(tmp, "airflow.env")
+            with open(env_path, "w", encoding="utf-8") as handle:
+                handle.write("GOLD_DB_HOST=127.0.0.1\nGOLD_DB_USER=gold_writer\n")
+            with patch.dict(os.environ, {"LAKEHOUSE_AIRFLOW_ENV": env_path}, clear=True):
+                runtime_env = _runtime_environment()
+            self.assertEqual(runtime_env["GOLD_DB_HOST"], "127.0.0.1")
+            self.assertEqual(runtime_env["GOLD_DB_USER"], "gold_writer")
+
+    def test_gold_production_command_does_not_apply_schema(self):
+        from dags.dag_gold_mart_build import _gold_command
+
+        self.assertIn("--no-schema", _gold_command())
+        self.assertIn("--no-mark-missing-day", _gold_command())
+
+    def test_bronze_subprocess_reads_runtime_env_file(self):
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+
+        from dags.dag_daily_job_lakehouse_pipeline import _runtime_environment
+
+        with TemporaryDirectory() as tmp:
+            env_path = os.path.join(tmp, "airflow.env")
+            with open(env_path, "w", encoding="utf-8") as handle:
+                handle.write("LAKEHOUSE_INCREMENTAL_MAX_PAGES=9\nGOLD_DB_HOST=127.0.0.1\n")
+            with patch.dict(os.environ, {"LAKEHOUSE_AIRFLOW_ENV": env_path}, clear=True):
+                runtime_env = _runtime_environment()
+            self.assertEqual(runtime_env["LAKEHOUSE_INCREMENTAL_MAX_PAGES"], "9")
+            self.assertEqual(runtime_env["GOLD_DB_HOST"], "127.0.0.1")
+
     def test_dag_has_preflight_crawlers_audit_and_summary(self):
         os.environ.setdefault("AIRFLOW_HOME", "/home/womcloud/airflow")
         from dags.dag_daily_job_lakehouse_pipeline import CRAWLERS, dag

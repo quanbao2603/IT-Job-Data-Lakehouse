@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -17,6 +18,25 @@ from src.gold.silver_release_reader import (
 
 
 class TestGoldReviewRegressions(unittest.TestCase):
+    def test_missing_release_no_mutation_mode_skips_database_and_snapshot(self):
+        from src.gold.run_gold_mart import build_gold_release
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("src.gold.silver_release_reader.latest_release", return_value=None), \
+                    patch("src.gold.connection.connect") as connect, \
+                    patch("src.gold.release_controller.mark_missing_day") as mark_missing:
+                result = build_gold_release(
+                    silver_root=tmp,
+                    state_db_path=str(Path(tmp) / "state.db"),
+                    apply_schema=False,
+                    mark_missing_day_on_missing=False,
+                )
+
+        self.assertEqual(result["status"], "MISSING")
+        self.assertTrue(result["database_mutation_skipped"])
+        connect.assert_not_called()
+        mark_missing.assert_not_called()
+
     def test_blocked_snapshot_does_not_overwrite_loaded_day(self):
         class Cursor:
             def __init__(self):

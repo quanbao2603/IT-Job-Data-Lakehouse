@@ -19,16 +19,44 @@ from airflow.utils.state import State
 from airflow.utils.trigger_rule import TriggerRule
 from datetime import timedelta
 
-PROJECT_ROOT = os.environ.get("LAKEHOUSE_PROJECT_ROOT", "/home/womcloud/IT-Job-Data-Lakehouse")
-PYTHON = os.environ.get("LAKEHOUSE_PYTHON", f"{PROJECT_ROOT}/lakehouse_env/bin/python")
-STATE_DB = os.environ.get("LAKEHOUSE_STATE_DB_PATH", f"{PROJECT_ROOT}/data/state_store.db")
-MAX_PAGES = os.environ.get("LAKEHOUSE_INCREMENTAL_MAX_PAGES", "5")
-MAX_ACTIVE_TASKS = min(max(int(os.environ.get("LAKEHOUSE_MAX_ACTIVE_TASKS", "3")), 1), 3)
+def _runtime_environment() -> dict[str, str]:
+    """Load the Airflow service env for DAG code and crawler subprocesses.
+
+    LocalExecutor task processes do not always retain the systemd
+    ``EnvironmentFile`` variables. Loading the same file here keeps the crawler,
+    Silver subprocess and Bronze audit on the configured runtime paths without
+    putting any secret in the repository.
+    """
+    env = os.environ.copy()
+    env_path = env.get("LAKEHOUSE_AIRFLOW_ENV", "/home/womcloud/airflow/airflow.env")
+    try:
+        with open(env_path, encoding="utf-8") as handle:
+            for line in handle:
+                key, separator, raw_value = line.partition("=")
+                if not separator or not key.strip() or key.lstrip().startswith("#"):
+                    continue
+                value = raw_value.strip()
+                if (value.startswith('"') and value.endswith('"')) or (
+                    value.startswith("'") and value.endswith("'")
+                ):
+                    value = value[1:-1]
+                env[key.strip()] = value
+    except OSError:
+        pass
+    return env
+
+
+_PROCESS_ENV = _runtime_environment()
+PROJECT_ROOT = _PROCESS_ENV.get("LAKEHOUSE_PROJECT_ROOT", "/home/womcloud/IT-Job-Data-Lakehouse")
+PYTHON = _PROCESS_ENV.get("LAKEHOUSE_PYTHON", f"{PROJECT_ROOT}/lakehouse_env/bin/python")
+STATE_DB = _PROCESS_ENV.get("LAKEHOUSE_STATE_DB_PATH", f"{PROJECT_ROOT}/data/state_store.db")
+MAX_PAGES = _PROCESS_ENV.get("LAKEHOUSE_INCREMENTAL_MAX_PAGES", "5")
+MAX_ACTIVE_TASKS = min(max(int(_PROCESS_ENV.get("LAKEHOUSE_MAX_ACTIVE_TASKS", "3")), 1), 3)
 
 
 def silver_enabled_from_environment() -> bool:
     """Read the Silver gate from process env or the Airflow service env file."""
-    value = os.environ.get("LAKEHOUSE_SILVER_ENABLED")
+    value = _PROCESS_ENV.get("LAKEHOUSE_SILVER_ENABLED")
     if value is None:
         env_path = os.environ.get("LAKEHOUSE_AIRFLOW_ENV", "/home/womcloud/airflow/airflow.env")
         try:
@@ -44,7 +72,7 @@ def silver_enabled_from_environment() -> bool:
 
 
 SILVER_ENABLED = silver_enabled_from_environment()
-FAILURE_LEDGER = os.environ.get(
+FAILURE_LEDGER = _PROCESS_ENV.get(
     "LAKEHOUSE_FAILURE_LEDGER",
     f"{PROJECT_ROOT}/data/operational/source_failures.jsonl",
 )
@@ -75,7 +103,7 @@ DEFAULT_ARGS = {
 
 def _run_crawler(platform: str, module: str, **_: object) -> Dict[str, Any]:
     """Run one crawler, stream its logs, and require its final JSON contract."""
-    env = os.environ.copy()
+    env = _runtime_environment()
     env.update({"PYTHONUNBUFFERED": "1", "PYTHONPATH": PROJECT_ROOT})
     command = [PYTHON, "-m", module, "--mode", "incremental", "--max-pages", MAX_PAGES]
     process = subprocess.Popen(
@@ -193,15 +221,15 @@ def _run_silver(**context: Any) -> Dict[str, Any]:
     pipeline = BronzeToSilverPipeline(
         registry=registry,
         writer=SilverWriter(
-            os.environ.get("LAKEHOUSE_SILVER_ROOT", f"{PROJECT_ROOT}/data/silver"),
-            max_records_per_batch=int(os.environ.get("LAKEHOUSE_SILVER_MAX_RECORDS_PER_BATCH", "5000")),
+            _PROCESS_ENV.get("LAKEHOUSE_SILVER_ROOT", f"{PROJECT_ROOT}/data/silver"),
+            max_records_per_batch=int(_PROCESS_ENV.get("LAKEHOUSE_SILVER_MAX_RECORDS_PER_BATCH", "5000")),
             minio_client=silver_client,
             bucket=silver_bucket,
             object_namespace=run_id,
         ),
         run_id=run_id,
-        resolution_version=os.environ.get("LAKEHOUSE_SILVER_RESOLUTION_VERSION", "v1"),
-        pending_review_path=os.environ.get(
+        resolution_version=_PROCESS_ENV.get("LAKEHOUSE_SILVER_RESOLUTION_VERSION", "v1"),
+        pending_review_path=_PROCESS_ENV.get(
             "LAKEHOUSE_PENDING_REVIEW_PATH", f"{PROJECT_ROOT}/data/operational/pending_review.csv"
         ),
     )
