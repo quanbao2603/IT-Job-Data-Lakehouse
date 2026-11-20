@@ -61,6 +61,29 @@ class TestDagContract(unittest.TestCase):
             self.assertEqual(runtime_env["LAKEHOUSE_INCREMENTAL_MAX_PAGES"], "9")
             self.assertEqual(runtime_env["GOLD_DB_HOST"], "127.0.0.1")
 
+    def test_blocked_topcv_is_deferred_without_treating_it_as_success(self):
+        from dags.dag_daily_job_lakehouse_pipeline import is_deferred_source_block
+
+        self.assertTrue(
+            is_deferred_source_block(
+                "topcv",
+                ["topcv request returned HTTP 403; circuit breaker active for 900s"],
+            )
+        )
+        self.assertTrue(
+            is_deferred_source_block(
+                "topcv",
+                ["topcv cooldown active for HTTP 403 (597s remaining); no request sent"],
+            )
+        )
+        self.assertFalse(
+            is_deferred_source_block(
+                "topcv",
+                ["topcv parser returned no listing data while source total is unavailable"],
+            )
+        )
+        self.assertFalse(is_deferred_source_block("itviec", ["HTTP 403"]))
+
     def test_dag_has_preflight_crawlers_audit_and_summary(self):
         os.environ.setdefault("AIRFLOW_HOME", "/home/womcloud/airflow")
         from dags.dag_daily_job_lakehouse_pipeline import CRAWLERS, dag
@@ -76,7 +99,8 @@ class TestDagContract(unittest.TestCase):
         self.assertLessEqual(dag.max_active_tasks, 3)
         self.assertEqual(dag.max_active_runs, 1)
         self.assertEqual(dag.get_task("bronze_audit_after_crawl").trigger_rule, "all_done")
-        self.assertEqual(dag.get_task("crawl_pipeline_summary").trigger_rule, "all_success")
+        self.assertEqual(dag.get_task("silver_pipeline_guard").trigger_rule, "all_done")
+        self.assertEqual(dag.get_task("crawl_pipeline_summary").trigger_rule, "all_done")
 
 
 if __name__ == "__main__":

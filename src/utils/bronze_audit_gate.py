@@ -59,16 +59,22 @@ def validate_source_results(
     failures = {
         source: result.get("status")
         for source, result in source_results.items()
-        if source in expected and result.get("status") != "SUCCESS"
+        if source in expected and result.get("status") not in {"SUCCESS", "DEFERRED"}
+    }
+    deferred = {
+        source: result.get("reason") or "deferred"
+        for source, result in source_results.items()
+        if source in expected and result.get("status") == "DEFERRED"
     }
     if failures:
         details = ", ".join(f"{source}={status}" for source, status in failures.items())
         raise AuditGateError(f"Non-success source result: {details}")
 
     return {
-        "status": "PASS",
+        "status": "DEFERRED" if deferred else "PASS",
         "source_count": len(expected),
-        "success_count": len(expected),
+        "success_count": sum(1 for source in expected if source_results[source].get("status") == "SUCCESS"),
+        "deferred_sources": deferred,
         "empty_success_count": sum(
             1 for source in expected if int(source_results[source].get("records_ingested", 0)) == 0
         ),
@@ -102,6 +108,9 @@ def audit_bronze_run(
 ) -> Dict[str, Any]:
     """Validate source status plus State Store/manifest/object evidence."""
     summary = validate_source_results(source_results, expected_sources=expected_sources)
+    if summary.get("status") == "DEFERRED":
+        summary.update({"checked_objects": 0, "state_store": "DEFERRED"})
+        return summary
     raw_run_ids = [source_results[source].get("run_id") for source in expected_sources]
     if any(not run_id for run_id in raw_run_ids):
         raise AuditGateError("A successful source result is missing run_id")

@@ -137,6 +137,18 @@ class TestAuditGate(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["source_count"], 2)
 
+    def test_audit_defers_when_a_source_is_deferred(self):
+        result = validate_source_results(
+            {
+                "topcv": {"status": "DEFERRED", "reason": "cooldown"},
+                "vieclam24h": {"status": "SUCCESS", "records_ingested": 2},
+            },
+            expected_sources=["topcv", "vieclam24h"],
+        )
+        self.assertEqual(result["status"], "DEFERRED")
+        self.assertEqual(result["deferred_sources"], {"topcv": "cooldown"})
+        self.assertEqual(result["success_count"], 1)
+
     def test_audit_rechecks_object_checksum_envelope_and_record_count(self):
         from src.storage.metadata_envelope import MetadataEnvelope
         from src.utils.bronze_audit_gate import audit_bronze_run

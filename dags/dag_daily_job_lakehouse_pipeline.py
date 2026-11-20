@@ -14,6 +14,7 @@ from typing import Any, Dict
 
 import pendulum
 from airflow import DAG
+from airflow.exceptions import AirflowSkipException
 from airflow.operators.python import PythonOperator
 from airflow.utils.state import State
 from airflow.utils.trigger_rule import TriggerRule
@@ -101,6 +102,17 @@ DEFAULT_ARGS = {
 }
 
 
+def is_deferred_source_block(platform: str, output_lines: list[str]) -> bool:
+    """Recognize a source circuit-breaker block that should defer this DAG run."""
+    if platform != "topcv":
+        return False
+    output = "\n".join(output_lines).lower()
+    return (
+        "http 403; circuit breaker active" in output
+        or "cooldown active for http 403" in output
+    )
+
+
 def _run_crawler(platform: str, module: str, **_: object) -> Dict[str, Any]:
     """Run one crawler, stream its logs, and require its final JSON contract."""
     env = _runtime_environment()
@@ -131,6 +143,10 @@ def _run_crawler(platform: str, module: str, **_: object) -> Dict[str, Any]:
             result = candidate
             break
     if return_code != 0:
+        if is_deferred_source_block(platform, output_lines):
+            raise AirflowSkipException(
+                f"{platform} source is deferred by its circuit breaker; no request retry will be attempted"
+            )
         raise RuntimeError(f"{platform} crawler exited with code {return_code}")
     if not isinstance(result, dict) or result.get("status") != "SUCCESS":
         raise RuntimeError(f"{platform} crawler returned an invalid success contract")
@@ -157,7 +173,14 @@ def _build_task_results(dag_run: Any, task_instance: Any) -> Dict[str, Dict[str,
         ti = dag_run.get_task_instance(task_id=task_id)
         if ti is None or ti.state != State.SUCCESS:
             state = (ti.state if ti else "missing") or "missing"
-            results[platform] = {"status": str(state).upper(), "records_ingested": 0}
+            if platform == "topcv" and state == State.SKIPPED:
+                results[platform] = {
+                    "status": "DEFERRED",
+                    "records_ingested": 0,
+                    "reason": "source_circuit_breaker_active",
+                }
+            else:
+                results[platform] = {"status": str(state).upper(), "records_ingested": 0}
             continue
         value = task_instance.xcom_pull(task_ids=task_id)
         if isinstance(value, dict):
@@ -182,18 +205,47 @@ def _audit_after_crawl(**context: Any) -> Dict[str, Any]:
         secret_key=os.getenv("MINIO_ROOT_PASSWORD", os.getenv("MINIO_SECRET_KEY")),
         secure=os.getenv("MINIO_SECURE", "false").lower() == "true",
     )
-    audit = audit_bronze_run(
-        results,
-        expected_sources=CRAWLERS,
-        state_db_path=STATE_DB,
-        minio_client=client,
-        bronze_bucket=os.getenv("MINIO_BRONZE_BUCKET", "bronze"),
-    )
+    deferred_sources = {
+        source: result.get("reason") or "deferred"
+        for source, result in results.items()
+        if result.get("status") == "DEFERRED"
+    }
+    if deferred_sources:
+        audit = {
+            "status": "DEFERRED",
+            "reason": "Bronze audit deferred because a source circuit breaker is active",
+            "deferred_sources": deferred_sources,
+            "source_count": len(CRAWLERS),
+            "success_count": sum(1 for result in results.values() if result.get("status") == "SUCCESS"),
+            "records_ingested": sum(int(result.get("records_ingested", 0)) for result in results.values()),
+        }
+    else:
+        audit = audit_bronze_run(
+            results,
+            expected_sources=CRAWLERS,
+            state_db_path=STATE_DB,
+            minio_client=client,
+            bronze_bucket=os.getenv("MINIO_BRONZE_BUCKET", "bronze"),
+        )
     print(json.dumps({"source_results": results, "audit": audit}, ensure_ascii=False, sort_keys=True))
     return {"source_results": results, "audit": audit}
 
 
 def _run_silver(**context: Any) -> Dict[str, Any]:
+    audit_result = context["ti"].xcom_pull(task_ids="bronze_audit_after_crawl") or {}
+    audit_status = audit_result.get("audit", {}).get("status")
+    if audit_status == "DEFERRED":
+        result = {
+            "status": "DEFERRED",
+            "reason": "Bronze audit deferred; Silver waits for the blocked source cooldown",
+            "deferred_sources": audit_result.get("audit", {}).get("deferred_sources", {}),
+        }
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        raise AirflowSkipException(result["reason"])
+    if audit_status != "PASS":
+        reason = "Bronze audit did not pass; Silver was not run"
+        print(json.dumps({"status": "SKIPPED", "reason": reason}, ensure_ascii=False, sort_keys=True))
+        raise AirflowSkipException(reason)
     if not SILVER_ENABLED:
         result = {"status": "DISABLED", "reason": "LAKEHOUSE_SILVER_ENABLED=false"}
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
@@ -255,17 +307,28 @@ def state_reader(object_key: str):
 
 def _report_success(**context: Any) -> Dict[str, Any]:
     audit_result = context["ti"].xcom_pull(task_ids="bronze_audit_after_crawl") or {}
-    silver_result = context["ti"].xcom_pull(task_ids="silver_pipeline_guard") or {"status": "DISABLED"}
+    silver_result = context["ti"].xcom_pull(task_ids="silver_pipeline_guard") or {"status": "SKIPPED"}
     source_results = audit_result.get("source_results", {})
+    audit_status = audit_result.get("audit", {}).get("status")
+    if audit_status == "DEFERRED":
+        status = "DEFERRED"
+    elif audit_status == "PASS" and silver_result.get("status") == "SUCCESS":
+        status = "SUCCESS"
+    else:
+        status = "FAILED"
     summary = {
-        "status": "SUCCESS",
+        "status": status,
         "source_success_count": sum(1 for result in source_results.values() if result.get("status") == "SUCCESS"),
+        "deferred_source_count": sum(1 for result in source_results.values() if result.get("status") == "DEFERRED"),
         "empty_success_count": sum(1 for result in source_results.values() if result.get("records_ingested", 0) == 0),
         "records_ingested": sum(int(result.get("records_ingested", 0)) for result in source_results.values()),
-        "bronze_audit": audit_result.get("audit", {}).get("status"),
-        "silver_trigger": silver_result.get("status", "DISABLED"),
+        "bronze_audit": audit_status,
+        "silver_trigger": silver_result.get("status", "SKIPPED"),
+        "deferred_sources": audit_result.get("audit", {}).get("deferred_sources", {}),
     }
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+    if status == "FAILED":
+        raise RuntimeError("Bronze/Silver pipeline did not complete successfully; see summary")
     return summary
 
 
@@ -319,13 +382,13 @@ with DAG(
     silver_pipeline_guard = PythonOperator(
         task_id="silver_pipeline_guard",
         python_callable=_run_silver,
-        trigger_rule=TriggerRule.ALL_SUCCESS,
+        trigger_rule=TriggerRule.ALL_DONE,
     )
     bronze_audit >> silver_pipeline_guard
 
     pipeline_summary = PythonOperator(
         task_id="crawl_pipeline_summary",
         python_callable=_report_success,
-        trigger_rule=TriggerRule.ALL_SUCCESS,
+        trigger_rule=TriggerRule.ALL_DONE,
     )
     silver_pipeline_guard >> pipeline_summary
