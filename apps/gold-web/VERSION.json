@@ -1,0 +1,8 @@
+{
+  "application": "it-insight-web",
+  "version": "0.1.0",
+  "source_commit": "set-by-scripts/package_release.sh",
+  "built_at": "set-by-scripts/package_release.sh",
+  "ai_enabled": false,
+  "production_deployed": false
+}

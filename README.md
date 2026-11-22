@@ -26,6 +26,8 @@ Các thành phần chính:
 - `docs/bronze-architecture-review.md`: review kiến trúc và bằng chứng kiểm tra Bronze.
 - `docs/architecture-handoff-ai.md`: bản quét cấu trúc, data-flow và architecture handoff cho AI khác.
 - `docs/three-layer-audit-2026-11-19.md`: rà soát hiện trạng Bronze–Silver–Gold, bằng chứng runtime, lỗi đã sửa và gap còn lại.
+- `apps/gold-web/`: web/API tra cứu Gold (FastAPI + React), chỉ đọc bằng `gold_reader`; chưa triển khai production.
+- `docs/web/`: inventory, data/API contract, test evidence, acceptance, operations và deployment plan cho web.
 
 Payload Bronze hiện là **extracted observation payload** theo từng crawl run. Cookie/session, `.env`, SQLite runtime, MinIO objects, log và virtualenv không thuộc Git repository.
 

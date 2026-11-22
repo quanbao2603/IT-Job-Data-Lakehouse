@@ -1,0 +1,16 @@
+.venv/
+.venv310/
+__pycache__/
+.pytest_cache/
+*.pyc
+.env
+.env.*
+!.env.example
+server/static/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+*.tsbuildinfo
+node_modules/
+dist/
