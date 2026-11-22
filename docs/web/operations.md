@@ -1,8 +1,15 @@
 # Operations runbook — IT Insight Web
 
-Applies after the bundle has been approved and installed at
-`/home/womcloud/services/it-insight/` (layout below). Nothing in this file has been
-executed on production yet.
+Applies to the installed deployment at `/home/womcloud/services/it-insight/`.
+The service runs as a **systemd user unit** (`it-insight-web.service`) with linger
+enabled, so it starts at boot without root. Nginx exposure is the only root-owned step.
+
+```bash
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+systemctl --user status it-insight-web.service
+systemctl --user restart it-insight-web.service
+journalctl --user -u it-insight-web.service -n 100 --no-pager
+```
 
 ## Layout
 

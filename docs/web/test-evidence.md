@@ -118,6 +118,25 @@ SMOKE=PASS
 This proves the bundle installs and runs from the lock file alone, without the repo
 checkout, `.venv` or `node_modules`.
 
+## Deployed service (VPS, 2026-11-22)
+
+```text
+release       /home/womcloud/services/it-insight/releases/20261122T140226Z
+current    →  that release
+unit          ~/.config/systemd/user/it-insight-web.service  (enabled, linger=yes)
+web.env       600, 10 keys, reader-only (no GOLD_DB_USER / MINIO keys)
+/api/health   200
+/api/ready    200
+/api/dashboard 200, jobs=3092
+crash test    SIGKILL → new PID, NRestarts=1, health 200
+snippet test  real nginx :8088 with the /insights/ block:
+              /insights 301 · /insights/ 200 · asset 200 · /api/ready 200 · /api/nope 404
+```
+
+`/etc/nginx` was not modified: it is root-owned and the agent has no sudo password.
+The apply script is ready at `deploy/apply_nginx.sh` (idempotent, backup + `nginx -t` +
+auto-restore + reload + probe).
+
 ## Limitations of this evidence
 
 - The `/insights/` route was exercised through a local prefix proxy, not Nginx; the public

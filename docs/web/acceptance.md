@@ -1,7 +1,8 @@
 # Web/API acceptance (W11)
 
 Scope: **web + API reading Gold**. AI (AI00–AI05) is out of scope and not started.
-Production deployment to Nginx/systemd is **not** performed — it awaits owner approval.
+The web service is installed and running on the VPS; the public Nginx route awaits one
+root command (see `deployment.md`).
 
 ## Acceptance checklist
 
@@ -17,8 +18,8 @@ Production deployment to Nginx/systemd is **not** performed — it awaits owner 
 | DB error, missing release and 0 results are three different states | ✅ | 503 codes, empty-state UI, tests |
 | Reader-only session; no secret in frontend/bundle/log | ✅ | `readonly=True`, no secret in built assets, secret scan |
 | Desktop/mobile/keyboard/CSV reviewed | ⚠️ partial | DOM tests cover keyboard Escape and dialog semantics; no real browser/pixel/mobile rendering (Chromium cannot start on this VPS) |
-| HTTPS, prefix, static assets verified on the VPS URL | ❌ not deployed | Prefix verified through a local proxy; Nginx unchanged |
-| Service self-recovers per configuration | ❌ not enabled | unit template only (`Restart=on-failure`) |
+| HTTPS, prefix, static assets verified on the VPS URL | ⏳ chờ root | Snippet verified with a real Nginx instance on `127.0.0.1:8088`; `/etc/nginx` edit needs root |
+| Service self-recovers per configuration | ✅ | user systemd unit, `SIGKILL` → new PID, `NRestarts=1`, health 200 |
 | Bronze/Silver/Gold and other web paths unchanged | ✅ | no DB/ETL/DAG/nginx change in this task |
 | AI shows "not configured" and calls no model | ✅ | `/api/assistant/status`, disabled UI button |
 
@@ -50,10 +51,10 @@ traffic and while leaving headroom for Airflow/PostgreSQL.
 
 1. Owner approval for the deployment window.
 2. Bundle built and checksum-verified (`scripts/package_release.sh`).
-3. `web.env` placed on the server with `gold_reader` credentials (never in Git).
-4. systemd unit enabled, service healthy on `127.0.0.1:8010`.
+3. ~~`web.env` placed on the server with `gold_reader` credentials~~ — done, mode 600.
+4. ~~systemd unit enabled, service healthy on `127.0.0.1:8010`~~ — done (user unit + linger).
 5. Nginx `location /insights/` added, `nginx -t`, reload, HTTPS probes, and confirmation
-   that the existing site still works.
+   that the existing site still works — **pending root**.
 6. Optional: web access protection (Basic Auth account prepared by the operator).
 7. Rollback rehearsal: repoint `current`, restart only the web service, restore the Nginx
-   snippet.
+   snippet — service restart already exercised; Nginx rollback is a single `cp` + reload.

@@ -1,8 +1,33 @@
 # Deployment plan — IT Insight Web (W08–W10)
 
-**Status: prepared, not executed.** No systemd unit, Nginx location, port or credential
-was changed on the VPS. Everything below requires explicit owner approval for the
-deployment window.
+**Status: service installed and running; Nginx step pending root.**
+
+## 0. Deployment log (2026-11-22)
+
+```text
+bundle        it-insight-web-20261122T140226Z.tar.gz (sha256 OK)
+release       /home/womcloud/services/it-insight/releases/20261122T140226Z
+current   ->  that release
+web.env       /home/womcloud/services/it-insight/config/web.env (600, reader keys only)
+unit          ~/.config/systemd/user/it-insight-web.service (enabled, linger=yes)
+bind          127.0.0.1:8010, 1 worker, limit-concurrency 16, root-path /insights
+probes        /api/health 200, /api/ready 200, /api/dashboard 200 (3.092 jobs)
+crash test    SIGKILL → systemd restarted (new PID, NRestarts=1), health 200
+snippet test  real nginx on 127.0.0.1:8088 with the block below:
+              /insights 301, /insights/ 200, assets 200, /api/* 200, unknown /api 404
+nginx site    /etc/nginx/sites-enabled/9router — NOT modified (root required)
+```
+
+Pending command (root):
+
+```bash
+sudo bash /home/womcloud/services/it-insight/deploy/apply_nginx.sh
+```
+
+It is idempotent, backs up the site file, inserts the location before the TLS listener,
+runs `nginx -t`, restores the backup on failure, reloads Nginx and probes the public URL.
+Basic Auth reuses `/etc/nginx/.htpasswd`; remove the two `auth_basic` lines in the script
+to publish the page openly, or create a dedicated web account with `htpasswd` first.
 
 ## 1. Bundle
 
