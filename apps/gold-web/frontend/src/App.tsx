@@ -247,7 +247,7 @@ export default function App() {
           className={page === key ? 'nav-item active' : 'nav-item'}
           title={PAGE_LABELS[key]}
           onClick={() => setPage(key)}
-        >{PAGE_ICONS[key]}<span>{PAGE_LABELS[key]}</span></button>)}
+        >{PAGE_ICONS[key]}<span>{PAGE_LABELS[key]}</span>{key === 'assistant' && <small className="nav-badge">AI</small>}</button>)}
       </nav>
 
       <div className="sidebar-note">
@@ -761,6 +761,9 @@ function Assistant({ status }: { status: AssistantStatus | null }) {
       <span className="eyebrow">Trợ lý dữ liệu</span>
       <h2>Đặt câu hỏi.<br />Hiểu thị trường rõ hơn.</h2>
       <p>{status?.message ?? 'AI sẽ được tích hợp sau khi web/API được nghiệm thu và mô hình được lựa chọn.'}</p>
+      <span className={status?.enabled ? 'status-pill ok' : 'status-pill'}>
+        {status?.enabled ? 'Đã kết nối mô hình AI' : 'Chưa kết nối mô hình AI'}
+      </span>
       <div className="prompt-examples">
         {(status?.examples ?? []).map((example) => <div key={example}><Sparkles size={14} aria-hidden /><p>{example}</p></div>)}
       </div>
