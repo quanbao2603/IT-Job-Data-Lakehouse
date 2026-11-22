@@ -17,8 +17,10 @@ const live = Boolean(BASE)
 
 describe.skipIf(!live)('IT Insight web (live API)', () => {
   beforeAll(() => {
-    if (BASE && window.location.href !== BASE) {
-      window.history.replaceState(null, '', BASE)
+    // jsdom's URL comes from IT_INSIGHT_BASE_URL (see vitest.config.ts); only
+    // normalise it when the two disagree so history.replaceState stays same-origin.
+    if (BASE && new URL(BASE).origin !== window.location.origin) {
+      window.history.replaceState(null, '', new URL(BASE).pathname)
     }
   })
 

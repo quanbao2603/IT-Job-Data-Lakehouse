@@ -137,6 +137,23 @@ snippet test  real nginx :8088 with the /insights/ block:
 The apply script is ready at `deploy/apply_nginx.sh` (idempotent, backup + `nginx -t` +
 auto-restore + reload + probe).
 
+## Public URL (direct port, 2026-11-22)
+
+```text
+release       20261122T150924Z (root base build: VITE_BASE_PATH=/)
+bind          0.0.0.0:8010
+local         GET / 200 · HEAD /api/health 200 · GET /api/health 200 · /api/dashboard 200
+public        http://womtech.io.vn:8010/ → 200 (check-host nodes de1, ua1, us1)
+              http://womtech.io.vn:8010/api/health → 200 (de1, ua1, us1)
+              TCP 8010 open from il1, ir6, ua3
+dom tests     4 passed against http://127.0.0.1:8010/ (root base)
+backend       30 passed (new: HEAD mirrors GET status without a body)
+hidden        /docs /redoc /openapi.json → 404
+```
+
+Note: `grep /insights` still finds one reference in the bundle — that is the prefix
+detection in `api.ts`, which lets the same build serve both `/` and `/insights/`.
+
 ## Limitations of this evidence
 
 - The `/insights/` route was exercised through a local prefix proxy, not Nginx; the public

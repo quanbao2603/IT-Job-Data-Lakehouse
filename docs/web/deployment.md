@@ -1,6 +1,29 @@
 # Deployment plan — IT Insight Web (W08–W10)
 
-**Status: service installed and running; Nginx step pending root.**
+**Status: live on the internet at `http://womtech.io.vn:8010/`.**
+
+## 0a. Public deployment (2026-11-22, direct port)
+
+The owner asked for the app to be reachable on its own port rather than under a
+`/insights/` prefix, so the service now listens on `0.0.0.0:8010` and the frontend is
+built with a root base (`VITE_BASE_PATH=/`).
+
+```text
+release     /home/womcloud/services/it-insight/releases/20261122T150924Z
+current  →  that release
+bind        0.0.0.0:8010 (no proxy, no --root-path)
+asset base  /assets/…  ·  API base  /api/…
+local       GET / 200 · GET+HEAD /api/health 200 · /api/dashboard 200
+public      http://womtech.io.vn:8010/ → 200 from DE, UA, US (check-host)
+            TCP 8010 reachable from IL, IR, UA nodes
+dns         womtech.io.vn → 160.236.192.170 (direct A record, no CDN)
+docs        /docs, /redoc, /openapi.json → 404 (disabled)
+```
+
+Known trade-off: plain HTTP, no authentication, read-only API. Anyone with the URL can
+read the published job data and consume up to `limit-concurrency 16` concurrent requests.
+The `/insights/` Nginx route in this document is **optional** and needs the prefixed build
+(`VITE_BASE_PATH=/insights/` plus `WEB_ROOT_PATH=/insights`); do not mix the two builds.
 
 ## 0. Deployment log (2026-11-22)
 
@@ -18,7 +41,7 @@ snippet test  real nginx on 127.0.0.1:8088 with the block below:
 nginx site    /etc/nginx/sites-enabled/9router — NOT modified (root required)
 ```
 
-Pending command (root):
+Optional command (root) — only for the prefixed variant:
 
 ```bash
 sudo bash /home/womcloud/services/it-insight/deploy/apply_nginx.sh

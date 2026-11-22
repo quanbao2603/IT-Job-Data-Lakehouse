@@ -7,6 +7,7 @@ from typing import Any, Callable
 from fastapi import Depends, FastAPI, HTTPException, Path, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -185,6 +186,13 @@ def create_app(
     static_dir = FilePath(__file__).with_name("static")
     if static_dir.exists():
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
+
+    # Uptime monitors commonly probe with HEAD; Starlette only auto-handles HEAD
+    # when the route declares it. Advertise HEAD wherever GET exists so probes see
+    # the same status code without a body.
+    for route in app.routes:
+        if isinstance(route, APIRoute) and "GET" in route.methods:
+            route.methods.add("HEAD")
     return app
 
 

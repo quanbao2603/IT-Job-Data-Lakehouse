@@ -6,6 +6,11 @@ Web/API tra cứu **Gold PostgreSQL** bằng role `gold_reader` trong giao dịc
 Tài liệu chuẩn nằm ở `docs/web/` (inventory, data contract, API contract, test evidence,
 acceptance, operations, deployment). File này chỉ là hướng dẫn chạy nhanh.
 
+**Đang chạy:** <http://womtech.io.vn:8010/> — service `it-insight-web.service` (systemd user
+unit, linger bật), release dưới `/home/womcloud/services/it-insight/`, bind `0.0.0.0:8010`,
+frontend build base `/`. Bản `/insights/` qua Nginx là tuỳ chọn, cần build base
+`/insights/` và `WEB_ROOT_PATH=/insights`.
+
 ## Thành phần
 
 - `server/app.py` — FastAPI routes, error contract, static SPA.
@@ -15,7 +20,7 @@ acceptance, operations, deployment). File này chỉ là hướng dẫn chạy n
 - `frontend/src` — React 19 + Vite, 6 trang, tiếng Việt.
 - `scripts/verify_live.py` — đối soát API với Gold bằng SQL (19 kiểm tra).
 - `scripts/package_release.sh` — đóng gói bundle + sha256.
-- `deploy/` — template systemd, Nginx snippet, runbook.
+- `deploy/` — template systemd, Nginx snippet, `apply_nginx.sh`, runbook.
 
 ## Chạy local (Python 3.10, cùng hệ với VPS)
 

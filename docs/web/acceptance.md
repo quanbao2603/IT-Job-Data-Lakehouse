@@ -1,8 +1,7 @@
 # Web/API acceptance (W11)
 
 Scope: **web + API reading Gold**. AI (AI00–AI05) is out of scope and not started.
-The web service is installed and running on the VPS; the public Nginx route awaits one
-root command (see `deployment.md`).
+The web service is installed, running, and reachable at **`http://womtech.io.vn:8010/`**.
 
 ## Acceptance checklist
 
@@ -18,7 +17,7 @@ root command (see `deployment.md`).
 | DB error, missing release and 0 results are three different states | ✅ | 503 codes, empty-state UI, tests |
 | Reader-only session; no secret in frontend/bundle/log | ✅ | `readonly=True`, no secret in built assets, secret scan |
 | Desktop/mobile/keyboard/CSV reviewed | ⚠️ partial | DOM tests cover keyboard Escape and dialog semantics; no real browser/pixel/mobile rendering (Chromium cannot start on this VPS) |
-| HTTPS, prefix, static assets verified on the VPS URL | ⏳ chờ root | Snippet verified with a real Nginx instance on `127.0.0.1:8088`; `/etc/nginx` edit needs root |
+| Public URL serves the app and API | ✅ | `http://womtech.io.vn:8010/` 200 from DE/UA/US; index, asset, `/api/*` 200 |
 | Service self-recovers per configuration | ✅ | user systemd unit, `SIGKILL` → new PID, `NRestarts=1`, health 200 |
 | Bronze/Silver/Gold and other web paths unchanged | ✅ | no DB/ETL/DAG/nginx change in this task |
 | AI shows "not configured" and calls no model | ✅ | `/api/assistant/status`, disabled UI button |
@@ -53,8 +52,7 @@ traffic and while leaving headroom for Airflow/PostgreSQL.
 2. Bundle built and checksum-verified (`scripts/package_release.sh`).
 3. ~~`web.env` placed on the server with `gold_reader` credentials~~ — done, mode 600.
 4. ~~systemd unit enabled, service healthy on `127.0.0.1:8010`~~ — done (user unit + linger).
-5. Nginx `location /insights/` added, `nginx -t`, reload, HTTPS probes, and confirmation
-   that the existing site still works — **pending root**.
+5. Public route verified end to end — done via the dedicated port (no Nginx change).
 6. Optional: web access protection (Basic Auth account prepared by the operator).
 7. Rollback rehearsal: repoint `current`, restart only the web service, restore the Nginx
    snippet — service restart already exercised; Nginx rollback is a single `cp` + reload.

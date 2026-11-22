@@ -181,6 +181,13 @@ class TestGoldWebAPI(unittest.TestCase):
         self.assertTrue(payload["meta"]["gold_release_id"].startswith("gold_demo_fixture"))
         self.assertGreater(payload["summary"]["jobs"], 0)
 
+    def test_head_is_supported_where_get_is(self):
+        for path in ("/api/health", "/api/ready", "/api/dashboard"):
+            response = self.client.head(path)
+            self.assertEqual(response.status_code, 200, path)
+            self.assertEqual(response.content, b"", path)
+        self.assertEqual(self.client.head("/api/nope").status_code, 404)
+
     def test_production_rejects_demo_mode(self):
         from unittest.mock import patch
         from server.config import get_settings

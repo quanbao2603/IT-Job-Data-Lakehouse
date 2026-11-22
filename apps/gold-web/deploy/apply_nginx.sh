@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Apply the /insights/ location to the existing Nginx site (requires root).
 #
+# OPTIONAL: production already serves at http://womtech.io.vn:8010/ directly.
+# Use this only for the prefixed variant, and build that bundle with
+#   VITE_BASE_PATH=/insights/  +  WEB_ROOT_PATH=/insights
+# otherwise /insights/ will reference /assets/… which Nginx does not route.
+#
 #   sudo bash deploy/apply_nginx.sh
 #
 # Behaviour:
