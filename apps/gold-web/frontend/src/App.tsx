@@ -247,7 +247,7 @@ export default function App() {
           className={page === key ? 'nav-item active' : 'nav-item'}
           title={PAGE_LABELS[key]}
           onClick={() => setPage(key)}
-        >{PAGE_ICONS[key]}<span>{PAGE_LABELS[key]}</span>{key === 'assistant' && <small className="nav-badge">AI</small>}</button>)}
+        >{PAGE_ICONS[key]}<span>{PAGE_LABELS[key]}</span>{key === 'assistant' && <small className="nav-badge" aria-hidden="true">AI</small>}</button>)}
       </nav>
 
       <div className="sidebar-note">
