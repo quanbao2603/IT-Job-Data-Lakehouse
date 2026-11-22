@@ -46,7 +46,8 @@ nghiệp, Trợ lý AI, Trạng thái dữ liệu) và đối chiếu 3 ảnh t�
 | Kỹ năng | Danh sách rank 2 cột | Bảng trái (kỹ năng / số tin / thanh tỷ lệ) + panel cặp bên phải | Drill sang danh sách tin |
 | Doanh nghiệp | Danh sách hàng | Lưới card 3 cột, 4 ô thống kê, nút xem tin | Drill theo `company_key`, phân trang |
 | Trạng thái dữ liệu | Hàng check dạng text | Bảng có cột Kết quả / Quy tắc / Mức độ / Giá trị + bảng coverage | Dữ liệu DQ nguyên vẹn |
-| Trợ lý AI | Card giữa trang | Bố cục 2 cột: khung hỏi đáp disabled + panel nguồn dữ liệu | `assistant/status` thật, không giả lập trả lời |
+| Trợ lý AI | Card giữa trang | Bố cục 2 cột: khung hỏi đáp disabled + nhãn "Chưa kết nối mô hình AI" + panel nguồn dữ liệu | `assistant/status` thật (`enabled`), không giả lập trả lời |
+| Điều hướng | Không có nhãn phụ | Badge "AI" cạnh mục Trợ lý AI (`aria-hidden`, không lọt vào accessible name) | — |
 | Trạng thái phụ | Loading/error/empty dùng theme cũ | Cùng token mới, `role="alert"`/`role="status"` giữ nguyên | — |
 
 **Không có mẫu riêng, ghi rõ phạm vi:**
@@ -118,12 +119,14 @@ Build: `npm run typecheck` sạch, `npm run build` OK (JS 264.9 kB / gzip 81.3 k
 **Đã cập nhật production frontend** (chủ dự án giao "triển khai chỉnh sửa giao diện"):
 
 ```text
-bundle    it-insight-web-20261122T182710Z.tar.gz (sha256 OK)
-release   releases/20261122T182710Z   (source_commit 5f358e0)
-current   → release mới (release cũ 20261122T160236Z giữ nguyên)
+bundle    it-insight-web-20261122T182710Z.tar.gz   (đợt 1 — restyle toàn bộ)
+bundle    it-insight-web-20261122T184111Z.tar.gz   (đợt 2 — nhãn AI + badge nav)
+release   releases/20261122T184111Z   (source_commit 0f7f029)
+current   → release mới (các release trước giữ nguyên)
 service   it-insight-web.service active, bind 0.0.0.0:8010
 live      /api/health 200 · /api/dashboard 200 · DOM suite 4/4 trên :8010
-assets    index-BrQjBdmM.js + index-BUSAfcnn.css (đúng một build)
+assets    index-BPr4RTl9.js + index-BCx81EfL.css (đúng một build)
+a11y      accessible name của nút "Trợ lý AI" = "Trợ lý AI" (kiểm bằng AX tree)
 ```
 
 Rollback: `ln -sfn releases/20261122T160236Z current` rồi restart service; không đụng dữ

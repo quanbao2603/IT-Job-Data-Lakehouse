@@ -37,6 +37,9 @@ assets        index-BrQjBdmM.js · index-BUSAfcnn.css (HTML and assets same buil
 probes        /api/health 200 · /api/dashboard 200 · DOM suite 4/4 against :8010
 unchanged     server code, API contract, web.env, DB reader, DAGs, MinIO, nginx
 rollback      ln -sfn releases/20261122T160236Z current && systemctl --user restart it-insight-web
+
+follow-up     releases/20261122T184111Z (commit 0f7f029): AI status pill + "AI" nav badge,
+              assets index-BPr4RTl9.js · DOM suite 4/4 · AX name "Trợ lý AI" unchanged
 ```
 
 The previous release's `VERSION.json` claimed `source_commit b9a0fef` while its assets were
