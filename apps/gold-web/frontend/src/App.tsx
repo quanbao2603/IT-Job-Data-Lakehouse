@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle, Bot, Building2, BriefcaseBusiness, CheckCircle2, Download,
-  RefreshCw, Search, Sparkles, X,
+  Coins, RefreshCw, Search, Sparkles, X,
 } from 'lucide-react'
 import {
   api, ApiError, AssistantStatus, CompaniesResponse, DashboardResponse,
@@ -32,6 +32,14 @@ function formatMoney(value: number | null) {
 }
 function formatDate(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString('vi-VN') : 'Chưa xác định'
+}
+function formatDay(value: string | null | undefined) {
+  if (!value) return 'Chưa xác định'
+  const [year, month, day] = value.slice(0, 10).split('-')
+  return year && month && day ? `${day}/${month}/${year}` : value
+}
+function bucketLabel(value: string) {
+  return value === 'UNKNOWN' ? 'Chưa xác định' : value
 }
 function display(value: string | null | undefined) {
   return value || 'Chưa xác định'
@@ -196,7 +204,7 @@ export default function App() {
       </div>
       <div className="top-meta">
         {meta ? <>
-          <span>Snapshot <b>{meta.snapshot_date}</b></span>
+          <span>Snapshot <b>{formatDay(meta.snapshot_date)}</b></span>
           <span>{number.format(meta.age_days)} ngày trước</span>
           <span className={meta.stale ? 'stale' : 'fresh'}>{meta.stale ? 'Dữ liệu cũ' : 'Trong ngưỡng mới'}</span>
         </> : <span>Đang kiểm tra release…</span>}
@@ -328,7 +336,7 @@ function FilterBar({ filters, options, updateFilter, clearOne, reset, chips }: {
         {filters.skill && !(options?.skills ?? []).some((item) => item.value === filters.skill) && <option value={filters.skill}>{filters.skill}</option>}
         {(options?.skills ?? []).map((item) => <option key={item.value} value={item.value}>{item.label} ({number.format(item.count)})</option>)}
       </select>
-      <button type="button" className="ghost-button" onClick={reset}>Xóa lọc</button>
+      <button type="button" className="ghost-button" onClick={reset} disabled={chips.length === 0}>Xóa lọc</button>
     </div>
     {chips.length > 0 && <div className="chips active-chips">
       {chips.map(([key, label]) => <button type="button" key={key} onClick={() => clearOne(key)}>
@@ -340,9 +348,9 @@ function FilterBar({ filters, options, updateFilter, clearOne, reset, chips }: {
 
 function ReleaseNote({ meta }: { meta: Meta }) {
   return <div className="release-note">
-    <span className="dot" aria-hidden />
+    <span className={meta.stale ? 'dot stale-dot' : 'dot'} aria-hidden />
     <span>
-      Release <b>{meta.gold_release_id}</b> · Silver {meta.silver_release_id ?? 'không có thông tin'} ·
+      Release <b>{meta.gold_release_id}</b> ·
       cutoff {formatDate(meta.snapshot_cutoff_at)} · {meta.stale ? 'dữ liệu đã cũ theo ngưỡng hiển thị' : 'đang trong ngưỡng freshness'}
     </span>
   </div>
@@ -353,16 +361,16 @@ function Overview({ data, onCompany, onSkill }: { data: DashboardResponse; onCom
     <ReleaseNote meta={data.meta} />
     <div className="metric-grid">
       <Metric icon={<BriefcaseBusiness />} label="Tin hợp nhất được quan sát" value={number.format(data.summary.jobs)} note="Theo snapshot Gold" />
-      <Metric icon={<Building2 />} label="Doanh nghiệp" value={number.format(data.summary.companies)} note="Loại UNKNOWN khỏi KPI" />
+      <Metric icon={<Building2 />} label="Doanh nghiệp" value={number.format(data.summary.companies)} note="Không tính nhóm chưa xác định" />
       <Metric icon={<Sparkles />} label="Kỹ năng xuất hiện" value={number.format(data.summary.skills)} note="Skill hợp lệ trong cohort" />
       <Metric
-        icon={<span className="money-icon">₫</span>}
+        icon={<Coins />}
         label="Trung vị lương đăng tuyển"
         value={data.summary.salary_median == null ? '—' : `${money.format(data.summary.salary_median)} đ`}
         note={data.summary.salary_samples === 0 ? 'Chưa có mẫu lương hợp lệ' : `${number.format(data.summary.salary_samples)} mẫu hợp lệ`}
       />
     </div>
-    <p className="definition">{data.meta.salary_definition}. Quan sát gần nhất: {formatDate(data.summary.last_seen_at)}. Địa điểm chưa xác định: {number.format(data.summary.missing_city)} tin.</p>
+    <p className="definition">Lương: trung vị của trung điểm khoảng lương VND trên các tin có đủ min/max hợp lệ. Quan sát gần nhất: {formatDate(data.summary.last_seen_at)}.</p>
     <div className="grid-two">
       <Distribution title="Theo chuyên môn" items={data.domains} />
       <Distribution title="Theo địa điểm" items={data.cities} />
@@ -401,9 +409,10 @@ function Distribution({ title, items }: { title: string; items: { value: string;
     <div className="panel-heading"><h2>{title}</h2><span>{items.length} nhóm</span></div>
     {items.length === 0 && <p className="muted">Chưa có dữ liệu cho nhóm này.</p>}
     {items.slice(0, 8).map((item) => <div className="bar-row" key={item.value}>
-      <div className="bar-label"><span>{item.label ?? item.value}</span><b>{number.format(item.count)}</b></div>
+      <div className="bar-label"><span>{bucketLabel(item.label ?? item.value)}</span><b>{number.format(item.count)}</b></div>
       <div className="bar-track"><span style={{ width: `${Math.max(3, (item.count / max) * 100)}%` }} /></div>
     </div>)}
+    {items.length > 8 && <p className="muted">Hiển thị 8 trong {items.length} nhóm lớn nhất.</p>}
   </section>
 }
 
@@ -454,18 +463,18 @@ function Jobs({ data, sort, onSort, onSelect, onExport, onPage }: {
         }}
       >
         <div className="job-main">
-          <span className="job-domain">{display(job.job_domain)}</span>
+          <span className="job-domain">{bucketLabel(display(job.job_domain))}</span>
           <h2>{job.canonical_title}</h2>
           <p className="company-name">{job.company_display_name}</p>
           <div className="chips">
-            <span>{display(job.city_bucket)}</span>
-            <span>{display(job.job_level)}</span>
-            <span>{display(job.work_mode)}</span>
-            {job.platforms.slice(0, 3).map((platform) => <span key={platform}>{platform}</span>)}
+            <span><em>Địa điểm</em>{bucketLabel(display(job.city_bucket))}</span>
+            <span><em>Cấp bậc</em>{bucketLabel(display(job.job_level))}</span>
+            <span><em>Hình thức</em>{bucketLabel(display(job.work_mode))}</span>
+            {job.platforms.slice(0, 3).map((platform) => <span className="source-chip" key={platform}>{platform}</span>)}
           </div>
         </div>
         <div className="job-side">
-          <strong>{job.salary_sample_flag ? formatMoney(job.salary_midpoint_vnd) : 'Chưa có lương'}</strong>
+          <strong className={job.salary_sample_flag ? undefined : 'muted-salary'}>{job.salary_sample_flag ? formatMoney(job.salary_midpoint_vnd) : 'Chưa có lương'}</strong>
           <small>Quan sát gần nhất<br />{formatDate(job.last_seen_at)}</small>
           <small>{job.source_count} nguồn · {job.skills.length} kỹ năng</small>
         </div>

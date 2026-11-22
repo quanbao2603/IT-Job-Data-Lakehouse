@@ -17,6 +17,7 @@ The web service is installed, running, and reachable at **`http://womtech.io.vn:
 | DB error, missing release and 0 results are three different states | ✅ | 503 codes, empty-state UI, tests |
 | Reader-only session; no secret in frontend/bundle/log | ✅ | `readonly=True`, no secret in built assets, secret scan |
 | Desktop/mobile/keyboard/CSV reviewed | ⚠️ partial | DOM tests cover keyboard Escape and dialog semantics; no real browser/pixel/mobile rendering (Chromium cannot start on this VPS) |
+| Dark theme applied and reviewed | ✅ | public URL rendered in a real browser via an external screenshot service; overview + job list reviewed (`docs/web/evidence/`) |
 | Public URL serves the app and API | ✅ | `http://womtech.io.vn:8010/` 200 from DE/UA/US; index, asset, `/api/*` 200 |
 | Service self-recovers per configuration | ✅ | user systemd unit, `SIGKILL` → new PID, `NRestarts=1`, health 200 |
 | Bronze/Silver/Gold and other web paths unchanged | ✅ | no DB/ETL/DAG/nginx change in this task |

@@ -154,6 +154,36 @@ hidden        /docs /redoc /openapi.json → 404
 Note: `grep /insights` still finds one reference in the bundle — that is the prefix
 detection in `api.ts`, which lets the same build serve both `/` and `/insights/`.
 
+## Dark theme (2026-11-22)
+
+The UI was rebuilt on a dark palette (`--surface #121826` on `--bg #080b12`, violet
+accent, amber only for staleness) and verified with real browser renders of the public
+URL through an external screenshot service, then reviewed image by image:
+
+- `evidence/dark-overview.png` — overview, 1440 px
+- `evidence/dark-jobs.png` — job list, 1600 px
+
+What the review caught and what was changed:
+
+| Finding | Fix |
+| --- | --- |
+| KPI numbers sat on two different baselines (wrapped labels) | fixed-height label/caption rows + `margin-top:auto` on the value |
+| Muted text ~3.5:1 on cards | `--text-2 #b3bfd4`, `--text-3 #a3b0c6` (≥4.5:1) |
+| Chart track nearly invisible | `#202b41` track with inset ring, 6 px minimum bar |
+| `UNKNOWN` shown next to Vietnamese labels | `bucketLabel()` renders `Chưa xác định` in charts, chips and domain |
+| Salary icon was a text glyph `₫` beside lucide icons | `Coins` from lucide-react |
+| "Chưa có lương" used the accent colour | muted `.muted-salary` |
+| Green release dot while the snapshot was stale | `.dot.stale-dot` amber |
+| Release hash duplicated the Silver id | Silver id removed from the line (still in Gold id and quality page) |
+| Filter controls wrapped unevenly | filter bar is a grid: 6 columns wide, 2×2 with full-width search below 1320 px |
+| Triple unlabelled chips | chips carry `Địa điểm`/`Cấp bậc`/`Hình thức`, source chips get their own colour |
+| "Xóa lọc" looked active with no filters | `disabled` when no chip is active, muted styling |
+| Header date ISO vs body dd/mm/yyyy | single `formatDay()` → `22/11/2026` |
+| Salary footnote mixed three facts | now salary-only, wording matches the "Trung vị" label |
+
+Not changed on purpose: `UNKNOWN` values are Gold data, so they are translated for
+display but never hidden or re-bucketed.
+
 ## Limitations of this evidence
 
 - The `/insights/` route was exercised through a local prefix proxy, not Nginx; the public
