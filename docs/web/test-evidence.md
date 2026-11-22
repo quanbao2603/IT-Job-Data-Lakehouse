@@ -184,6 +184,44 @@ What the review caught and what was changed:
 Not changed on purpose: `UNKNOWN` values are Gold data, so they are translated for
 display but never hidden or re-bucketed.
 
+## UI redesign (2026-11-23)
+
+The frontend was restyled to the IT Insight reference mock (light content, dark teal
+sidebar, teal accent) without touching the API. Scope, gap list and out-of-scope findings:
+`ui-redesign.md`.
+
+Environment for this pass: Chromium 1208 driven over CDP, installed with its missing
+shared libraries extracted into a local prefix (`LD_LIBRARY_PATH`), so the review is a real
+browser render rather than a service screenshot. Pages: all 6, viewports 390 / 768 / 1440.
+
+```text
+typecheck     clean
+build         index-BrQjBdmM.js 264.9 kB (gzip 81.3) · index-BUSAfcnn.css
+DOM tests     IT_INSIGHT_BASE_URL=http://127.0.0.1:8010/ → 4 passed
+overlap       scrollWidth - clientWidth = 0 px on 18 loads (6 pages × 3 viewports)
+contrast      every sampled meta label ≥ 4.5:1 (automated walk of 20 selectors)
+console       0 errors / warnings
+```
+
+What the render loop caught and fixed (each one re-measured after the fix):
+
+| Finding | Fix |
+| --- | --- |
+| Salary KPI wrapped "đ" onto a second line | unit rendered as a small `<span class="metric-unit">`, never wrapped |
+| Filter grid blew out to 948 px columns at 390 px | `minmax(0,1fr)` tracks + `min-width:0` on selects |
+| "Làm mới" button pushed 21 px past the viewport | heading actions wrap, chip can shrink, age chip hidden < 760 px |
+| Muted labels at 3.1–4.2:1 on white | one muted token `#566e6c` (5.5:1) across breadcrumb, meta, legend, badges |
+| Avatar rendered the literal `{}` of a template-string company name | initials() keeps letters/digits only, falls back to `–` |
+| "0%" on a 9-row slice read as "no data" | `<1%` for non-zero shares under 1 % |
+| Donut centre said "tin có địa điểm" while it included UNKNOWN | label and footnote state that the bucket means "no representative city" |
+| Job card hid 15 of 21 skills without saying so | `+N kỹ năng` chip |
+| Mobile nav hid labels with `display:none` (lost the accessible name) | visually-hidden text, icon-only until active |
+| `/favicon.ico` 404 on every load | inline SVG favicon |
+
+Not changed on purpose: enum buckets are still translated for display only, the stale
+banner/`stale` pill/sidebar dot all still come from `meta`, and the AI screen still reports
+the real "not configured" status (no model call, no canned answer).
+
 ## Limitations of this evidence
 
 - The `/insights/` route was exercised through a local prefix proxy, not Nginx; the public

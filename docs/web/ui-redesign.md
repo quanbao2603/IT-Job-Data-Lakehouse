@@ -115,9 +115,19 @@ Build: `npm run typecheck` sạch, `npm run build` OK (JS 264.9 kB / gzip 81.3 k
 
 ## 5. FIX05 — Triển khai
 
-Release mới đóng gói theo `scripts/package_release.sh`, giải nén vào
-`releases/<stamp>`, chuyển symlink `current`, restart `it-insight-web.service`.
-Release cũ giữ nguyên để rollback. Xem `deployment.md` cho trạng thái cuối.
+**Đã cập nhật production frontend** (chủ dự án giao "triển khai chỉnh sửa giao diện"):
+
+```text
+bundle    it-insight-web-20261122T182710Z.tar.gz (sha256 OK)
+release   releases/20261122T182710Z   (source_commit 5f358e0)
+current   → release mới (release cũ 20261122T160236Z giữ nguyên)
+service   it-insight-web.service active, bind 0.0.0.0:8010
+live      /api/health 200 · /api/dashboard 200 · DOM suite 4/4 trên :8010
+assets    index-BrQjBdmM.js + index-BUSAfcnn.css (đúng một build)
+```
+
+Rollback: `ln -sfn releases/20261122T160236Z current` rồi restart service; không đụng dữ
+liệu, pipeline hay database. Chi tiết ở `deployment.md` §0b.
 
 Rollback chỉ cần trỏ lại `current` về `releases/20261122T160236Z` và restart service;
 không đụng dữ liệu, pipeline hay database.

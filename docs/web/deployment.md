@@ -25,6 +25,23 @@ read the published job data and consume up to `limit-concurrency 16` concurrent 
 The `/insights/` Nginx route in this document is **optional** and needs the prefixed build
 (`VITE_BASE_PATH=/insights/` plus `WEB_ROOT_PATH=/insights`); do not mix the two builds.
 
+## 0b. UI redesign release (2026-11-23)
+
+```text
+bundle        it-insight-web-20261122T182710Z.tar.gz (sha256 OK)
+release       /home/womcloud/services/it-insight/releases/20261122T182710Z
+source        commit 5f358e0 (frontend restyle + docs), built with the release script
+current   ->  that release (previous: 20261122T160236Z, kept for rollback)
+staging       same env on 127.0.0.1:8011 → then 8012 smoke test before the switch
+assets        index-BrQjBdmM.js · index-BUSAfcnn.css (HTML and assets same build)
+probes        /api/health 200 · /api/dashboard 200 · DOM suite 4/4 against :8010
+unchanged     server code, API contract, web.env, DB reader, DAGs, MinIO, nginx
+rollback      ln -sfn releases/20261122T160236Z current && systemctl --user restart it-insight-web
+```
+
+The previous release's `VERSION.json` claimed `source_commit b9a0fef` while its assets were
+built after `78381b6`; the new bundle stamps the real commit from Git.
+
 ## 0. Deployment log (2026-11-22)
 
 ```text

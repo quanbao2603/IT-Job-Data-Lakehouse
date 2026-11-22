@@ -16,8 +16,8 @@ The web service is installed, running, and reachable at **`http://womtech.io.vn:
 | Release change does not mix responses | ✅ | `expected_release_id` → 409, client reloads; API tests |
 | DB error, missing release and 0 results are three different states | ✅ | 503 codes, empty-state UI, tests |
 | Reader-only session; no secret in frontend/bundle/log | ✅ | `readonly=True`, no secret in built assets, secret scan |
-| Desktop/mobile/keyboard/CSV reviewed | ⚠️ partial | DOM tests cover keyboard Escape and dialog semantics; no real browser/pixel/mobile rendering (Chromium cannot start on this VPS) |
-| Dark theme applied and reviewed | ✅ | public URL rendered in a real browser via an external screenshot service; overview + job list reviewed (`docs/web/evidence/`) |
+| Desktop/mobile/keyboard/CSV reviewed | ✅ | real Chromium (CDP) at 390/768/1440: 6 pages, no horizontal overflow, 0 console errors, modal Escape + focus, nav, sort, pagination, CSV, drill-through (`ui-redesign.md` §4) |
+| UI matches the IT Insight reference design | ✅ | light theme + dark teal sidebar per design tokens; 8 before/after renders in `docs/web/evidence/` (`ui-redesign.md` §2–4) |
 | Public URL serves the app and API | ✅ | `http://womtech.io.vn:8010/` 200 from DE/UA/US; index, asset, `/api/*` 200 |
 | Service self-recovers per configuration | ✅ | user systemd unit, `SIGKILL` → new PID, `NRestarts=1`, health 200 |
 | Bronze/Silver/Gold and other web paths unchanged | ✅ | no DB/ETL/DAG/nginx change in this task |
