@@ -211,6 +211,11 @@ def resolve_company_key(
     normalized = str((observation or {}).get("company_name_normalized") or "").strip()
     if not normalized and canonical_company:
         normalized = clean_company_name(canonical_company)
+    # Silver maps an unparseable employer to the literal marker "UNKNOWN"; without
+    # this guard the marker becomes a real company dimension row that tops the
+    # "companies with the most jobs" chart and is not flagged is_unknown.
+    if normalized.casefold() in {"", "unknown", "n/a", "chưa xác định"}:
+        return unknown_company_key(normalization_version)
     return company_key(normalized, normalization_version)
 
 

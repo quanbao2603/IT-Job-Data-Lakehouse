@@ -95,3 +95,24 @@ Bronze, (b) entity đang mở nhưng không có observation mới trong release 
 - `work_mode` vẫn thiếu nhiều: 6/9 nền tảng không công bố hình thức làm việc.
 - Domain/cấp bậc là suy luận từ tiêu đề + nhãn nguồn, không phải nhãn do nguồn công bố; mọi
   thay đổi quy tắc đều bump version và ghi vào `gold_control.load_run`.
+
+## 6. Vì sao "Công ty nhiều tin nhất" vẫn có UNKNOWN
+
+Đo trên release `silver_release_manual_facet_fix_20261123_162842`: 1.310 entity không có
+tên công ty, trong đó **1.280 đến từ TopCV** và **30 từ Devwork** — không có nền tảng nào
+khác. Nguyên nhân:
+
+- TopCV: crawler lưu chuỗi template `{{ company?.name }}` (trang chưa render) → transform
+  đánh dấu UNKNOWN đúng, nhưng dữ liệu nguồn thực sự không có tên.
+- Devwork: nền tảng này ẩn nhà tuyển dụng, ghi literal "Công ty đang tuyển dụng".
+
+TopCV hiện vẫn trả **HTTP 403** kể cả khi gửi cookie phiên (`cf_clearance`,
+`topcv_session`) và header trình duyệt đầy đủ, nên chưa thể crawl lại để lấy tên công ty.
+
+Đã sửa ở Gold: `resolve_company_key` coi marker `UNKNOWN`/`N/A`/rỗng là thành viên
+`is_unknown` thay vì tạo một công ty thật tên "UNKNOWN". Vì vậy:
+
+- `dim_company` gắn cờ `is_unknown = true`;
+- API `/api/companies` và khối "Công ty nhiều tin nhất" loại thành viên này khỏi bảng xếp
+  hạng (nay bắt đầu bằng Bosch 87, VNPT 41, Vinsmart 31…);
+- KPI "Doanh nghiệp" vẫn báo 1.228 công ty thật.
