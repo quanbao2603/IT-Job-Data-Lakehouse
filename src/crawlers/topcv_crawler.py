@@ -30,16 +30,18 @@ from src.crawlers.base_crawler import (
 class TopCVCrawler(BaseCrawler):
     BASE_URL = "https://www.topcv.vn"
     SEARCH_BASE = "https://www.topcv.vn/tim-viec-lam-it?page={page}"
-    REQUEST_DELAY_MIN = 2.0
-    REQUEST_DELAY_MAX = 3.0
+    # Tunable without editing code: TopCV starts returning HTTP 429 when the crawl
+    # exceeds roughly 15-20 requests/minute from one IP.
+    REQUEST_DELAY_MIN = float(os.getenv("TOPCV_DELAY_MIN", "2.0"))
+    REQUEST_DELAY_MAX = float(os.getenv("TOPCV_DELAY_MAX", "3.0"))
     # curl_cffi impersonates a real Chrome TLS fingerprint, so Cloudflare no longer
     # answers 403 for every request. A faster burst (20-30) drew HTTP 429 from TopCV,
     # so the crawl runs at ~20 requests/minute: 10-15 requests, then a 20-30s pause,
     # plus a 2-3s delay per request. A real 403 still trips the 15 minute breaker.
-    REQUESTS_BEFORE_COOLDOWN_MIN = 10
-    REQUESTS_BEFORE_COOLDOWN_MAX = 15
-    COOLDOWN_MIN = 20.0
-    COOLDOWN_MAX = 30.0
+    REQUESTS_BEFORE_COOLDOWN_MIN = int(os.getenv("TOPCV_BURST_MIN", "10"))
+    REQUESTS_BEFORE_COOLDOWN_MAX = int(os.getenv("TOPCV_BURST_MAX", "15"))
+    COOLDOWN_MIN = float(os.getenv("TOPCV_COOLDOWN_MIN", "20"))
+    COOLDOWN_MAX = float(os.getenv("TOPCV_COOLDOWN_MAX", "30"))
     BLOCKED_COOLDOWN_SECONDS = 15 * 60
 
     def __init__(self, **kwargs):
