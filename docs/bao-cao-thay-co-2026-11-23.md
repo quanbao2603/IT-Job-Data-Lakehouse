@@ -1,6 +1,6 @@
 # Báo cáo dự án: Hệ thống Data Lakehouse phân tích thị trường việc làm IT Việt Nam
 
-**Ngày báo cáo:** 23/11/2026
+**Ngày báo cáo:** 24/11/2026
 **Sản phẩm công khai:** http://womtech.io.vn:8010/
 **Mã nguồn:** https://github.com/quanbao2603/IT-Job-Data-Lakehouse
 
@@ -126,7 +126,7 @@ Xử lý ở ba lớp:
 
 - **Địa điểm:** đọc thêm `job_locations` (VietnamWorks) và `company_location`; pattern
   thành phố có thứ tự ưu tiên (HCM, Hà Nội, Đà Nẵng, Hải Phòng, Cần Thơ…). Tỷ lệ chưa
-  xác định giảm từ 33% → 12,6%.
+  xác định giảm từ 33% → **2,8%**.
 - **Cấp bậc:** suy từ nhãn gốc của nền tảng, từ title, và từ số tháng kinh nghiệm.
   Sửa lỗi `monthsOfExperience` dạng dict của ITviec bị đọc thành "năm" khiến ~1.200 kỹ
   sư bị xếp nhầm Lead. Tỷ lệ chưa xác định 30% → 20%.
@@ -147,51 +147,51 @@ hệ thống không âm thầm publish dữ liệu sai.
 
 ## 5. Kết quả dữ liệu hiện tại
 
-**Release:** `gold_20261123_final` · snapshot 23/11/2026 · **33/33 kiểm tra đạt**
+**Release:** `gold_20261124_0531_steady` · snapshot 24/11/2026 · **33/33 kiểm tra đạt**
 
 | Chỉ số | Giá trị |
 |---|---|
-| Tin tuyển dụng (entity) | **4.446** |
-| Công ty | 1.874 |
-| Mẫu lương hợp lệ | 1.511 |
+| Tin tuyển dụng (entity) | **4.447** |
+| Công ty | **2.047** |
+| Mẫu lương hợp lệ | 1.512 |
 | Trung vị lương | 20 triệu VND |
-| Kỹ năng trích được | 129 |
-| Observation (quan sát) | 8.269 |
+| Kỹ năng trích được | 130 |
+| Observation (quan sát) | 8.835 |
 | Nền tảng | 9 |
 
 ### Phân bố theo chuyên môn
 
 | Nhóm | Số tin | Tỷ lệ |
 |---|---|---|
-| Phát triển phần mềm | 1.424 | 32,0% |
-| Dữ liệu & AI | 715 | 16,1% |
-| Chưa xác định | 826 | 18,6% |
-| Phân tích & Quản lý | 403 | 9,1% |
-| Hạ tầng & Cloud | 374 | 8,4% |
-| QA & Kiểm thử | 282 | 6,3% |
+| Phát triển phần mềm | 1.471 | 33,1% |
+| Dữ liệu & AI | 719 | 16,2% |
+| Chưa xác định | 762 | 17,1% |
+| Phân tích & Quản lý | 402 | 9,0% |
+| Hạ tầng & Cloud | 393 | 8,8% |
+| QA & Kiểm thử | 279 | 6,3% |
 | An ninh mạng | 252 | 5,7% |
-| Di động & Nhúng | 170 | 3,8% |
+| Di động & Nhúng | 169 | 3,8% |
 
 ### Phân bố theo địa điểm và cấp bậc
 
 | Địa điểm | Số tin | | Cấp bậc | Số tin |
 |---|---|---|---|---|
-| Hà Nội | 1.821 (41,0%) | | Mid | 1.471 (33,1%) |
-| Hồ Chí Minh | 1.672 (37,6%) | | Chưa xác định | 889 (20,0%) |
-| Chưa xác định | 562 (12,6%) | | Junior | 635 (14,3%) |
-| Khác | 367 (8,3%) | | Lead | 528 (11,9%) |
+| Hà Nội | 2.096 (47,1%) | | Mid | 1.472 (33,1%) |
+| Hồ Chí Minh | 1.760 (39,6%) | | Chưa xác định | 890 (20,0%) |
+| Chưa xác định | 125 (2,8%) | | Junior | 635 (14,3%) |
+| Khác | 442 (9,9%) | | Lead | 529 (11,9%) |
 | Đà Nẵng | 24 (0,5%) | | Senior | 495 (11,1%) |
 
 ### Top công ty tuyển dụng
 
-Bosch Global Software Technologies (89) · VNPT (41) · FPT Software (31) ·
-Vinsmart Future (31) · Nasani (25) · Bảo Việt IT Center (24) · MB Bank (24) ·
-Navigos Search (23)
+Bosch Global Software Technologies (89) · VNPT (41) · FPT Software (33) ·
+Vinsmart Future (31) · Nasani (30) · LG CNS Việt Nam (27) · Bảo Việt IT Center (24) ·
+MB Bank (24)
 
 ### Top kỹ năng được yêu cầu
 
-SQL (433) · Python (352) · Security (336) · Testing (315) · Agile (272) ·
-Linux (205) · AWS (196) · Java (196) · Scrum (189) · Azure (180)
+SQL (512) · Python (363) · Security (340) · Testing (321) · Agile (287) ·
+Java (210) · Linux (209) · AWS (202) · Scrum (199) · Git (189)
 
 ---
 
@@ -216,10 +216,9 @@ với PostgreSQL Gold, không so với snapshot cứng.
 
 ## 7. Hạn chế đã biết (báo cáo trung thực)
 
-1. **519 tin TopCV cũ** (quan sát ngày 07/11, phần lớn đã hết hạn) vẫn thiếu entity
-   công ty. Đã backfill được 56 tin từ trang chi tiết rồi bị TopCV chặn (HTTP 403 +
-   circuit breaker). Checkpoint được giữ lại nên có thể chạy tiếp bất cứ lúc nào bằng
-   `scripts/topcv_detail_backfill.py --only-missing`.
+1. **87 tin TopCV** đã bị chính TopCV xoá khỏi hệ thống (trang trả về trang tìm kiếm
+   chung, không còn nội dung). Không thể lấy tên công ty từ nguồn đã biến mất; các tin
+   này được giữ với nhãn "chưa xác định" và ghi rõ trong báo cáo.
 2. **DevWork không có entity công ty** — giới hạn của nguồn, chấp nhận nhãn "chưa xác
    định" và ghi rõ trong báo cáo (~41 tin).
 3. **Vieclam24h** chặn truy cập (403) ở lần cào gần nhất; dữ liệu cũ vẫn còn trong
@@ -249,7 +248,7 @@ với PostgreSQL Gold, không so với snapshot cứng.
 
 ## 9. Hướng phát triển
 
-1. Chạy tiếp backfill 519 tin TopCV cũ (checkpoint sẵn sàng) và publish lại Gold.
+1. Theo dõi các tin TopCV bị xoá (87 tin) và loại khỏi báo cáo xu hướng nếu cần.
 2. Bật cảnh báo vận hành (Telegram/webhook) khi DAG fail hoặc release quá cũ.
 3. Đưa review queue vào vận hành thật (người duyệt ACCEPT/REJECT).
 4. Bổ sung nguồn mới (LinkedIn VN, JobStreet) nếu được phép.
