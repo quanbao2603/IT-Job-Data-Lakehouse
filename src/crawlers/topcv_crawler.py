@@ -318,6 +318,66 @@ class TopCVCrawler(BaseCrawler):
                 return values[key]
         return ""
 
+    def _parse_listing_card(self, card) -> Optional[Dict[str, Any]]:
+        """One search-result card: title, company, city, experience, salary.
+
+        The listing page is server-rendered and already contains the employer, so a
+        25-request listing crawl can replace a 1.100-request detail crawl when TopCV
+        rate-limits the detail endpoint.
+        """
+        link = card.select_one("a[href*='/viec-lam/']")
+        href = (link.get("href") or "").split("?")[0] if link else ""
+        if not re.search(r"/viec-lam/[^/]+/\d+\.html$", href):
+            return None
+        if href.startswith("/"):
+            href = self.BASE_URL + href
+
+        def text(selector: str) -> str:
+            node = card.select_one(selector)
+            return self._clean(node.get_text(" ", strip=True)) if node else ""
+
+        job_title = text("h3") or text("a.title")
+        company_name = text(".company-name") or text(".company a") or text(".company")
+        city = text(".city-text") or text(".address")
+        experience = text(".exp")
+        salary = text(".salary") or text(".box-right .salary")
+        if not salary:
+            match = re.search(r"(\d[\d.,]*\s*-\s*\d[\d.,]*\s*triệu|Tới\s+\d[\d.,]*\s*triệu|Tho[ảa]\s*thuận)", card.get_text(" ", strip=True))
+            salary = match.group(1) if match else "Thỏa thuận"
+        if not job_title or not company_name:
+            return None
+        return {
+            "platform": "topcv",
+            "job_id": self._extract_job_id(href),
+            "job_url": href,
+            "scraped_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "content_hash": hashlib.sha256(f"{job_title}|{company_name}|{salary}|{city}".encode()).hexdigest(),
+            "company_name": company_name,
+            "job_title": job_title,
+            "salary": salary,
+            "job_location": city,
+            "location": city,
+            "experience": experience,
+            "job_level": "",
+            "company_size": "",
+            "company_address": "",
+            "company_industry": "",
+            "work_mode": "",
+            "contract_type": "",
+            "deadline": "",
+            "education": "",
+            "quantity": "",
+            "overview_requirements": "",
+            "overview_skills": "",
+            "job_description_raw": "",
+            "requirements_raw": "",
+            "industry_knowledge": "",
+            "required_skills": "",
+            "benefits_raw": "",
+            "work_address": city,
+            "work_time": "",
+        }
+
     def _parse_job_detail_raw(self, html_content: str, job_url: str) -> Dict[str, Any]:
         soup = BeautifulSoup(html_content, 'html.parser')
 
@@ -448,6 +508,8 @@ class TopCVCrawler(BaseCrawler):
         print(f"[*] Bắt đầu quét TopCV CNTT (cr257) - Chế độ: {mode_label} (Tối đa {max_pages} trang)...")
 
         candidates_urls = []
+        listing_records: list[Dict[str, Any]] = []
+        listing_only = os.getenv("TOPCV_LISTING_ONLY", "0").strip().lower() in {"1", "true", "yes"}
         seen = set()
         watermark_hit = False
         reported_total = None
@@ -508,10 +570,22 @@ class TopCVCrawler(BaseCrawler):
 
             candidates_urls.extend(job_links)
 
+            if listing_only:
+                for card in soup.select(".job-item-search-result"):
+                    record = self._parse_listing_card(card)
+                    if record:
+                        listing_records.append(record)
+
             if watermark_hit:
                 break
 
             time.sleep(random.uniform(1.0, 1.5))
+
+        if listing_only:
+            print(f"\n[*] LISTING-ONLY: {len(listing_records)} tin lấy trực tiếp từ trang danh sách (không gọi trang chi tiết)")
+            for record in listing_records:
+                yield record
+            return
 
         print(f"\n[*] TỔNG CỘNG PHÁT HIỆN: {len(candidates_urls)} tin tuyển dụng TopCV. BẮT ĐẦU CÀO STREAMING...")
         for idx, j_url in enumerate(candidates_urls, 1):
