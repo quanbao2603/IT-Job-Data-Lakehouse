@@ -233,6 +233,13 @@ def run_checks(bundle: Any) -> list[dict[str, Any]]:
     divergence = sum(1 for c in bundle.conflicts if c["conflict_type"] == "SOURCE_DIVERGENCE")
     results.append(_result("DQ-24", "Parquet entities and SQLite registry agree", 0, divergence, BLOCK, divergence == 0))
 
+    # DQ-24b display-only drift: D-G06 lets the registry win, so a description that
+    # was captured at a different length must stay visible but must not block.
+    description_drift = sum(1 for c in bundle.conflicts if c["conflict_type"] == "DESCRIPTION_DIVERGENCE")
+    drift_budget = max(1, len(bundle.dim_job) // 100)
+    results.append(_result("DQ-24b", "Description drift within 1% of entities", drift_budget,
+                           description_drift, WARN, description_drift <= drift_budget))
+
     # DQ-25 the UNKNOWN share of the domain axis stays visible.
     unknown_domain = sum(
         row["observed_job_count"] for row in bundle.market if row["job_domain"] == "UNKNOWN"

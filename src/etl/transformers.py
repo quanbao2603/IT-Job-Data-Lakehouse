@@ -41,9 +41,9 @@ SKILL_TAXONOMY = (
 # Versioned normalization contracts. Gold records these in gold_control.load_run so a
 # taxonomy or naming-rule change can never silently rewrite historical reports.
 SKILL_TAXONOMY_VERSION = "skill-taxonomy-v1"
-COMPANY_NORMALIZATION_VERSION = "company-normalization-v1"
-CITY_NORMALIZATION_VERSION = "city-normalization-v1"
-TRANSFORM_VERSION = "bronze-to-silver-transform-v1"
+COMPANY_NORMALIZATION_VERSION = "company-normalization-v2"
+CITY_NORMALIZATION_VERSION = "city-normalization-v2"
+TRANSFORM_VERSION = "bronze-to-silver-transform-v2"
 
 
 def normalization_versions() -> dict[str, str]:
@@ -71,21 +71,165 @@ def normalize_title(value: Any) -> str:
     return " ".join(word for word in words if word not in TITLE_STOP_WORDS)
 
 
+def _fold(value: Any) -> str:
+    """Casefold and strip Vietnamese diacritics for tolerant matching."""
+    text = unicodedata.normalize("NFD", normalize_text(value))
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+
+
+# Ordered city needles; the earliest occurrence in the folded string wins, so
+# "Hanoi / HCMC" resolves to the first city the source listed.
+CITY_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Hồ Chí Minh", ("ho chi minh", "tp.hcm", "tphcm", "hcm", "sai gon", "saigon", "tp hcm")),
+    ("Hà Nội", ("ha noi", "hanoi")),
+    ("Đà Nẵng", ("da nang", "danang")),
+)
+
+
 def normalize_city(value: Any) -> Optional[str]:
+    """Map free-form locations and addresses onto the five-group Gold axis."""
     text = normalize_text(value)
     if not text:
         return None
-    return CITY_ALIASES.get(text, "Khác")
+    folded = f" {_fold(text)} "
+    best: Optional[tuple[int, str]] = None
+    for label, needles in CITY_PATTERNS:
+        for needle in needles:
+            index = folded.find(needle)
+            if index >= 0 and (best is None or index < best[0]):
+                best = (index, label)
+    if best is not None:
+        return best[1]
+    return "Khác"
 
 
-def classify_job_level(value: Any) -> Optional[str]:
-    text = normalize_text(value)
-    if not text:
-        return None
-    for level in JOB_LEVELS:
-        if level.casefold() in text or normalize_text(level) in text:
-            return level
+LEVEL_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Director", (r"\bdirector\b", r"giam doc", r"\bcto\b", r"\bcio\b", r"head of")),
+    ("Intern", (r"\bintern(ship)?\b", r"thuc tap", r"\btts\b")),
+    ("Fresher", (r"\bfresher\b", r"entry level", r"moi tot nghiep")),
+    ("Lead", (r"\bteam lead\b", r"\btech lead\b", r"truong nhom", r"truong phong", r"\bmanager\b",
+              r"quan ly", r"\bprincipal\b", r"^lead\b", r"\blead engineer\b", r"\bengineering lead\b")),
+    ("Senior", (r"\bsenior\b", r"\bsr\.?\b", r"cap cao")),
+    ("Junior", (r"\bjunior\b", r"\bjr\.?\b", r"nhan vien", r"\bentry\b")),
+    ("Mid", (r"\bmid\b", r"\bmiddle\b", r"\bexperienced\b", r"chuyen vien", r"specialist")),
+)
+
+
+def _match_level(folded: str) -> Optional[str]:
+    for level, patterns in LEVEL_RULES:
+        for pattern in patterns:
+            if re.search(pattern, folded):
+                return level
     return None
+
+
+# Titles are noisier than a dedicated seniority field: "Chuyên viên Quản lý chất
+# lượng dữ liệu" is a mid-level role, not a manager. Title matching therefore uses
+# word-boundary patterns and drops the bare manager/quản lý needles.
+TITLE_LEVEL_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Director", (r"\bdirector\b", r"giam doc", r"\bcto\b", r"\bcio\b", r"head of")),
+    ("Intern", (r"\bintern\b", r"thuc tap", r"\btts\b")),
+    ("Fresher", (r"\bfresher\b", r"entry level", r"moi tot nghiep")),
+    ("Lead", (r"\bteam lead\b", r"\btech lead\b", r"truong nhom", r"truong phong", r"\bprincipal\b",
+              r"^lead\b", r"\blead engineer\b", r"\bengineering lead\b", r"\bmanager\b")),
+    ("Senior", (r"\bsenior\b", r"\bsr\.?\b", r"cap cao")),
+    ("Junior", (r"\bjunior\b", r"\bjr\.?\b", r"nhan vien")),
+    ("Mid", (r"\bmid\b", r"\bmiddle\b", r"chuyen vien", r"specialist")),
+)
+
+
+def _match_title_level(folded: str) -> Optional[str]:
+    for level, patterns in TITLE_LEVEL_PATTERNS:
+        for pattern in patterns:
+            if re.search(pattern, folded):
+                return level
+    return None
+
+
+def classify_job_level(
+    value: Any = None,
+    *,
+    title: Any = None,
+    experience_years: Optional[int] = None,
+) -> Optional[str]:
+    """Classify seniority from the source field, then the title, then years.
+
+    Sources label seniority inconsistently ("Experienced (non-manager)",
+    "Chuyên viên cấp cao", "Fresher/Entry level"), so an exact enum lookup
+    silently produced NULL for most platforms and the dashboard reported
+    "chưa xác định" for 98% of jobs.
+    """
+    text = normalize_text(value)
+    # A long field is a requirements paragraph, not a seniority label; letting it
+    # through made "lead the team" in the JD mark hundreds of engineers as Lead.
+    if text and len(text) <= 60:
+        folded = _fold(text)
+        if "non-manager" in folded or "non manager" in folded:
+            return "Mid"
+        level = _match_level(folded)
+        if level:
+            return level
+    title_text = normalize_text(title)
+    if title_text:
+        level = _match_title_level(_fold(title_text))
+        if level:
+            return level
+    if isinstance(experience_years, (int, float)) and experience_years >= 0:
+        if experience_years < 1:
+            return "Fresher"
+        if experience_years < 2:
+            return "Junior"
+        if experience_years < 5:
+            return "Mid"
+        if experience_years < 8:
+            return "Senior"
+        return "Lead"
+    return None
+
+
+DOMAIN_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("An ninh mạng", ("security", "an ninh", "an toan thong tin", "bao mat", "pentest", "soc analyst")),
+    ("Dữ liệu & AI", ("data", "du lieu", "machine learning", "artificial intelligence", " ai ", "analytics",
+                      "business intelligence", "etl", "warehouse", "nlp", "computer vision", "big data", "mlops")),
+    ("Hạ tầng & Cloud", ("devops", "cloud", "aws", "azure", "gcp", "kubernetes", "docker", "infrastructure",
+                         "ha tang", "system admin", "sysadmin", "network", "sre", "platform engineer")),
+    ("QA & Kiểm thử", ("qa ", "qc ", "tester", "test engineer", "kiem thu", "automation test", "selenium")),
+    ("Phân tích & Quản lý", ("business analyst", "phan tich nghiep vu", "product owner", "product manager",
+                             "project manager", "quan ly du an", "scrum master")),
+    ("Di động & Nhúng", ("android", "ios", "mobile", "flutter", "react native", "embedded", "nhung", "firmware", "iot")),
+    ("Phát triển phần mềm", ("developer", "engineer", "lap trinh", "phan mem", "backend", "frontend", "fullstack",
+                             "full stack", "software", "web", "java", "python", "php", ".net", "node")),
+)
+DOMAIN_LABELS = tuple(label for label, _ in DOMAIN_RULES)
+
+
+def classify_job_domain(*values: Any) -> Optional[str]:
+    """Fold industry/function/title text into the eight dashboard domains."""
+    folded = _fold(" ".join(str(value) for value in values if value))
+    if not folded.strip():
+        return None
+    padded = f" {folded} "
+    for label, needles in DOMAIN_RULES:
+        for needle in needles:
+            if needle in padded:
+                return label
+    return None
+
+
+PLACEHOLDER_COMPANY_PATTERNS = (
+    re.compile(r"\{\{.*?\}\}", re.S),
+    re.compile(r"\$\{.*?\}", re.S),
+    re.compile(r"^\s*(unknown|n/?a|company name|update later|dang cap nhat)\s*$", re.I),
+    re.compile(r"công ty đang tuyển dụng|cong ty dang tuyen dung", re.I),
+)
+
+
+def is_placeholder_company(value: Any) -> bool:
+    """True when the crawler captured a template or a generic 'hiring' label."""
+    text = _text(value)
+    if not text:
+        return True
+    return any(pattern.search(text) for pattern in PLACEHOLDER_COMPANY_PATTERNS)
 
 
 def clean_company_name(value: Any) -> str:
@@ -226,7 +370,18 @@ def build_bronze_metadata(envelope: dict[str, Any]) -> str:
 
 
 def _parse_experience(value: Any) -> tuple[Optional[float], Optional[float]]:
+    if isinstance(value, dict):
+        # itviec emits schema.org-style {"monthsOfExperience": 37}; reading the raw
+        # number as years turned 10 months into "Lead" for ~1.200 engineers.
+        months = value.get("monthsOfExperience") or value.get("months")
+        years = value.get("yearsOfExperience") or value.get("years")
+        if isinstance(months, (int, float)):
+            return months / 12.0, months / 12.0
+        if isinstance(years, (int, float)):
+            return float(years), float(years)
+        return None, None
     numbers = [float(token) for token in re.findall(r"\d+(?:\.\d+)?", normalize_text(value))]
+    numbers = [number for number in numbers if number <= 50]  # drop calendar years
     if not numbers:
         return None, None
     return numbers[0], numbers[-1]
@@ -253,12 +408,32 @@ def canonicalize_bronze_record(envelope: dict[str, Any], *, silver_updated_at: O
     if not title or not company:
         raise ValueError("Bronze payload lacks mandatory job_title/company_name")
     salary_min, salary_max, negotiable, currency = parse_salary(payload.get("salary"))
-    city_raw = payload.get("job_location") or payload.get("location") or payload.get("address")
+    # vietnamworks ships `job_locations` ("Hanoi / HCMC") and itviec ships `address`;
+    # reading only job_location/location/address left 506 VNW jobs with no city.
+    city_raw = (
+        payload.get("job_location")
+        or payload.get("job_locations")
+        or payload.get("location")
+        or payload.get("address")
+        or payload.get("company_location")
+    )
     description = strip_html(payload.get("job_description") or payload.get("description") or payload.get("general_description"))
     requirements = strip_html(payload.get("requirements") or payload.get("job_requirements") or payload.get("requirements_raw"))
     benefits = strip_html(payload.get("benefits") or payload.get("what_we_offer") or payload.get("benefits_raw"))
     exp_min, exp_max = _parse_experience(payload.get("experience_requirements") or payload.get("experience") or payload.get("years_of_experience"))
     raw_skills = _as_string_list(payload.get("skills") or payload.get("required_skills") or payload.get("overview_skills"))
+    placeholder_company = is_placeholder_company(company)
+    company_name = "UNKNOWN" if placeholder_company else clean_company_name(company)
+    company_normalized = "" if placeholder_company else clean_company_name(company)
+    raw_domain = (
+        payload.get("job_domain")
+        or payload.get("job_industry")
+        or payload.get("industries")
+        or payload.get("company_industry")
+        or payload.get("company_field")
+        or payload.get("job_function")
+        or payload.get("industry_knowledge")
+    )
     known = {"platform", "job_id", "source_job_id", "job_url", "source_url", "content_hash", "scraped_at", "observed_at", "job_title", "company_name", "salary", "job_location", "location", "address", "job_description", "description", "general_description", "requirements", "job_requirements", "requirements_raw", "benefits", "what_we_offer", "benefits_raw", "skills", "required_skills", "overview_skills", "experience_requirements", "experience", "years_of_experience", "posted_date_iso", "posted_date", "valid_through", "deadline", "expired_on", "quantity", "job_level", "work_mode", "employment_type"}
     posted_date = _iso_or_none(payload.get("posted_date_iso") or payload.get("posted_date"))
     expired_date = _iso_or_none(payload.get("valid_through") or payload.get("deadline") or payload.get("expired_on"))
@@ -268,21 +443,23 @@ def canonicalize_bronze_record(envelope: dict[str, Any], *, silver_updated_at: O
         "source_url": source_url, "canonical_url": make_canonical_url(source_url), "content_hash": content_hash,
         "crawled_at": _text(payload.get("scraped_at") or observed_at), "observed_at": observed_at,
         "ingested_at": metadata_ingested_at, "silver_updated_at": silver_updated_at or observed_at, "is_active": is_active,
-        "job_title": title, "job_title_normalized": normalize_title(title), "job_level": classify_job_level(payload.get("job_level") or payload.get("experience")),
+        "job_title": title, "job_title_normalized": normalize_title(title),
+        "job_level": classify_job_level(
+            payload.get("job_level") or payload.get("experience") or payload.get("experience_requirements"),
+            title=title,
+            experience_years=exp_min,
+        ),
         "job_expertise": _as_string_scalar(payload.get("job_expertise")),
         # job_domain must cover all nine platforms. Only itviec emits `job_domain` and only
         # vietnamworks emits `job_industry`; the five card-style platforms expose `industries`,
         # and the remaining ones only carry `company_industry`. Without this fallback chain the
         # Gold market aggregate would group ~7/9 platforms into UNKNOWN.
-        "job_domain": _as_string_scalar(
-            payload.get("job_domain")
-            or payload.get("job_industry")
-            or payload.get("industries")
-            or payload.get("company_industry")
-            or payload.get("company_field")
-        ),
+        # One dashboard taxonomy instead of the raw LinkedIn-style industry strings,
+        # which left 8 of 9 platforms in NULL or in 20 competing English buckets.
+        "job_domain": classify_job_domain(raw_domain, title, payload.get("job_expertise"), " ".join(raw_skills)),
         "work_mode": _as_string_scalar(payload.get("work_mode")), "working_time": _as_string_scalar(payload.get("working_time") or payload.get("employment_type")), "overtime_policy": _as_string_scalar(payload.get("overtime_policy")),
-        "company_name": clean_company_name(company), "company_name_raw": company, "company_name_normalized": clean_company_name(company), "company_size": _as_string_scalar(payload.get("company_size")),
+        "company_name": company_name, "company_name_raw": company, "company_name_normalized": company_normalized,
+        "company_size": _as_string_scalar(payload.get("company_size")),
         "company_industry": _as_string_scalar(payload.get("company_industry")), "company_type": _as_string_scalar(payload.get("company_type") or payload.get("contract_type")), "company_country": _as_string_scalar(payload.get("company_country")),
         "city": _as_string_scalar(city_raw), "city_normalized": normalize_city(city_raw), "full_address": _as_string_scalar(payload.get("work_address") or payload.get("full_address") or city_raw),
         "salary_raw": payload.get("salary"), "salary_min_vnd": salary_min, "salary_max_vnd": salary_max, "is_negotiable": negotiable, "salary_currency": currency,

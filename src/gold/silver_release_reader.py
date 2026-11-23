@@ -308,6 +308,24 @@ def _row_value(row: Any, key: str) -> Any:
         return None
 
 
+_BULLET_CHARS = str.maketrans({"\u2022": "-", "\u00b7": "-", "\u25cf": "-", "\u25aa": "-", "\u2023": "-"})
+
+
+def _same_text(left: Any, right: Any) -> bool:
+    """Compare long text after normalizing bullet glyphs and whitespace.
+
+    The same job description can reach Gold with "- " from one observation and "• "
+    from another. Registry-wins (D-G06) still applies, so a bullet-only difference
+    must not block publishing as SOURCE_DIVERGENCE.
+    """
+    def canon(value: Any) -> str:
+        text = "" if value is None else str(value)
+        text = text.translate(_BULLET_CHARS).replace("\u00a0", " ")
+        return " ".join(text.split())
+
+    return canon(left) == canon(right)
+
+
 def _resolution_version_key(version: Any) -> tuple[int, int, str]:
     """Order numeric resolver versions numerically, not lexicographically."""
     text = str(version or "")
@@ -480,8 +498,20 @@ def build_effective_entity(
                 ("canonical_description", "canonical_description"),
             ):
                 registry_value = _row_value(registry_row, registry_field)
-                if row.get(parquet_field) != registry_value:
-                    conflicts.append(_conflict("SOURCE_DIVERGENCE", unified_job_id, {
+                if parquet_field == "canonical_description":
+                    differs = not _same_text(row.get(parquet_field), registry_value)
+                else:
+                    differs = (row.get(parquet_field) or None) != (registry_value or None)
+                if differs:
+                    # Description is a display field that D-G06 resolves in the
+                    # registry's favour, so a length/content drift is reported as its
+                    # own non-blocking conflict instead of blocking the release.
+                    conflict_type = (
+                        "DESCRIPTION_DIVERGENCE"
+                        if parquet_field == "canonical_description"
+                        else "SOURCE_DIVERGENCE"
+                    )
+                    conflicts.append(_conflict(conflict_type, unified_job_id, {
                         "field": parquet_field,
                         "parquet": row.get(parquet_field),
                         "registry": registry_value,

@@ -449,6 +449,52 @@ class EntityRegistry:
             )
             return row["unified_job_id"]
 
+    def refresh_entity_canonical(
+        self,
+        unified_job_id: str,
+        *,
+        title: Optional[str] = None,
+        company: Optional[str] = None,
+        city: Optional[str] = None,
+        job_level: Optional[str] = None,
+        work_mode: Optional[str] = None,
+        salary_min_vnd: Optional[int] = None,
+        salary_max_vnd: Optional[int] = None,
+        description: Optional[str] = None,
+    ) -> None:
+        """Mirror derived entity facets after a replay re-derives an observation.
+
+        Gold compares the sealed Parquet entity row with this table (D-G06); when a
+        normalization change rewrites company/city/level, both sides must move together
+        or every replayed entity is reported as SOURCE_DIVERGENCE.
+        """
+        columns = {
+            "canonical_title": title,
+            "canonical_company": company,
+            "canonical_city": city,
+            "canonical_job_level": job_level,
+            "canonical_work_mode": work_mode,
+            "canonical_salary_min_vnd": salary_min_vnd,
+            "canonical_salary_max_vnd": salary_max_vnd,
+            "canonical_description": description,
+        }
+        assignments = []
+        values: list[object] = []
+        for column, value in columns.items():
+            if value is not None:
+                assignments.append(f"{column} = ?")
+                values.append(value)
+        if not assignments:
+            return
+        assignments.append("updated_at = ?")
+        values.append(utc_now())
+        values.append(unified_job_id)
+        with self.transaction() as conn:
+            conn.execute(
+                f"UPDATE entity_registry SET {', '.join(assignments)} WHERE unified_job_id = ?",
+                values,
+            )
+
     def get_or_create_entity(
         self,
         *,

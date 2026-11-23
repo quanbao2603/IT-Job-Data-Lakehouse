@@ -480,9 +480,17 @@ class BronzeToSilverPipeline:
                     dict(row) for row in self.registry.list_observations(entity["unified_job_id"])
                 ]
                 known_observation_ids = {row.get("observation_id") for row in entity_observations}
+                # A replay must supersede the stored copy of the same observation: the
+                # registry keeps rows from earlier runs, and an unchanged observation_id
+                # used to keep the old derived facets (company, city, level, domain),
+                # so a normalization fix never reached the entity.
+                current_rows = current_observations_by_entity.get(entity["unified_job_id"], [])
+                current_by_id = {row.get("observation_id"): row for row in current_rows}
+                entity_observations = [
+                    current_by_id.get(row.get("observation_id"), row) for row in entity_observations
+                ]
                 entity_observations.extend(
-                    row for row in current_observations_by_entity.get(entity["unified_job_id"], [])
-                    if row.get("observation_id") not in known_observation_ids
+                    row for row in current_rows if row.get("observation_id") not in known_observation_ids
                 )
                 entity["observation_count"] = len(entity_observations)
                 entity["source_count"] = len({row.get("platform") for row in entity_observations})
@@ -493,6 +501,27 @@ class BronzeToSilverPipeline:
                     entity["canonical_posted_date"] = canonical.get("posted_date") or entity["canonical_posted_date"]
                     entity["canonical_description"] = canonical.get("job_description_clean") or entity["canonical_description"]
                     entity["canonical_currency"] = canonical.get("salary_currency") or entity["canonical_currency"]
+                    # Facets are derived, so the entity mirrors its canonical observation.
+                    entity["canonical_title"] = canonical.get("job_title") or entity.get("canonical_title")
+                    entity["canonical_company"] = canonical.get("company_name") or entity.get("canonical_company")
+                    entity["canonical_location"] = canonical.get("city_normalized") or entity.get("canonical_location")
+                    entity["canonical_salary_min_vnd"] = canonical.get("salary_min_vnd")
+                    entity["canonical_salary_max_vnd"] = canonical.get("salary_max_vnd")
+                    entity["canonical_job_level"] = canonical.get("job_level") or entity.get("canonical_job_level")
+                    entity["canonical_work_mode"] = canonical.get("work_mode") or entity.get("canonical_work_mode")
+                    refresh = getattr(self.registry, "refresh_entity_canonical", None)
+                    if callable(refresh):
+                        refresh(
+                            str(entity["unified_job_id"]),
+                            title=entity.get("canonical_title"),
+                            company=entity.get("canonical_company"),
+                            city=entity.get("canonical_location"),
+                            job_level=entity.get("canonical_job_level"),
+                            work_mode=entity.get("canonical_work_mode"),
+                            salary_min_vnd=entity.get("canonical_salary_min_vnd"),
+                            salary_max_vnd=entity.get("canonical_salary_max_vnd"),
+                            description=entity.get("canonical_description"),
+                        )
                 quality = validate_entity(entity)
                 if not quality.accepted:
                     raise ValueError(f"Silver entity rejected: {quality.quarantine_reason}")

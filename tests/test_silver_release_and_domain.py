@@ -9,7 +9,7 @@ import pyarrow.parquet as pq
 from src.etl.bronze_to_silver import BronzeToSilverPipeline
 from src.etl.silver_writer import SilverWriter
 from src.etl.transformers import canonicalize_bronze_record, generate_observation_id, normalization_versions
-from src.gold.silver_release_reader import latest_release, load_release, read_dataset
+from src.gold.silver_release_reader import _same_text, latest_release, load_release, read_dataset
 from src.storage.entity_registry import EntityRegistry
 from src.storage.metadata_envelope import MetadataEnvelope
 
@@ -41,22 +41,28 @@ def _envelope(platform, job_id, **extra):
 
 
 class TestJobDomainCoverage(unittest.TestCase):
-    """GAP-8: job_domain must be derivable for platforms that only expose `industries`."""
+    """GAP-8: every platform must land in the same dashboard domain taxonomy."""
 
     def test_domain_from_job_domain_field(self):
         record = canonicalize_bronze_record(_envelope("itviec", "1", job_domain="Fintech"))
-        self.assertEqual(record["job_domain"], "Fintech")
+        self.assertEqual(record["job_domain"], "Phát triển phần mềm")
 
     def test_domain_from_industries_field(self):
         record = canonicalize_bronze_record(_envelope("careerviet", "2", industries="CNTT - Phần mềm"))
-        self.assertEqual(record["job_domain"], "CNTT - Phần mềm")
+        self.assertEqual(record["job_domain"], "Phát triển phần mềm")
 
     def test_domain_from_company_industry_fallback(self):
         record = canonicalize_bronze_record(_envelope("topdev", "3", company_industry="E-commerce"))
-        self.assertEqual(record["job_domain"], "E-commerce")
+        self.assertEqual(record["job_domain"], "Phát triển phần mềm")
 
-    def test_domain_none_when_no_source_field(self):
-        record = canonicalize_bronze_record(_envelope("topcv", "4"))
+    def test_domain_uses_source_category_when_title_is_generic(self):
+        record = canonicalize_bronze_record(
+            _envelope("topdev", "5", job_title="Chuyên viên", company_industry="An ninh mạng")
+        )
+        self.assertEqual(record["job_domain"], "An ninh mạng")
+
+    def test_domain_none_when_nothing_signals_a_domain(self):
+        record = canonicalize_bronze_record(_envelope("topcv", "4", job_title="Chuyên viên"))
         self.assertIsNone(record["job_domain"])
 
     def test_missing_stable_observed_at_does_not_fallback_to_ingested_at(self):
@@ -74,9 +80,18 @@ class TestNormalizationVersions(unittest.TestCase):
     def test_versions_are_exposed(self):
         versions = normalization_versions()
         self.assertEqual(versions["skill_taxonomy_version"], "skill-taxonomy-v1")
-        self.assertEqual(versions["company_normalization_version"], "company-normalization-v1")
-        self.assertEqual(versions["city_normalization_version"], "city-normalization-v1")
-        self.assertEqual(versions["transform_version"], "bronze-to-silver-transform-v1")
+        self.assertEqual(versions["company_normalization_version"], "company-normalization-v2")
+        self.assertEqual(versions["city_normalization_version"], "city-normalization-v2")
+        self.assertEqual(versions["transform_version"], "bronze-to-silver-transform-v2")
+
+
+class TestRegistryParquetAgreement(unittest.TestCase):
+    """D-G06: a bullet glyph must not be reported as a content divergence."""
+
+    def test_bullet_and_whitespace_differences_are_equal(self):
+        self.assertTrue(_same_text("• Manage IT\n construction", "- Manage IT construction"))
+        self.assertTrue(_same_text(None, ""))
+        self.assertFalse(_same_text("Quản lý hệ thống", "Quản lý dự án"))
 
 
 class TestSilverReleaseSealing(unittest.TestCase):

@@ -267,6 +267,15 @@ class TopCVCrawler(BaseCrawler):
         work_mode = general_items.get('hình thức làm việc', '')
         contract_type = general_items.get('loại hợp đồng', '')
 
+        # TopCV serves an Angular shell until the client hydrates it. When the page is
+        # captured pre-render every selector resolves to the raw template, which used to
+        # be ingested as company_name "{{ company?.name }}" with an empty location/level.
+        # Fail closed instead: a skipped page surfaces as PARSER_FAILURE, not as data.
+        if "{{" in company_name and not any(
+            value.strip() for value in (job_location, experience, job_level, education, contract_type)
+        ):
+            raise ValueError("TopCV trả về trang template chưa render (company/location/level rỗng)")
+
         overview_requirements = ""
         overview_skills = ""
         for sec in soup.find_all('div', class_=re.compile(r'job-overview', re.I)):

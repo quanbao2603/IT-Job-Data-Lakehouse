@@ -61,6 +61,19 @@ class TestFailClosedCrawlers(unittest.TestCase):
             with self.assertRaises(CrawlerSourceError):
                 list(crawler.fetch_jobs(mode="incremental", max_pages=1))
 
+    def test_topcv_unrendered_template_page_is_rejected(self):
+        crawler = TopCVCrawler.__new__(TopCVCrawler)
+        crawler.source_name = "topcv"
+        html = """
+        <html><body>
+          <h1 class="job-title">Chuyên Viên Kinh Doanh</h1>
+          <div class="company-name">{{ company?.name }}</div>
+          <div class="salary">15 - 25 triệu</div>
+        </body></html>
+        """
+        with self.assertRaisesRegex(ValueError, "template"):
+            crawler._parse_job_detail_raw(html, "https://www.topcv.vn/viec-lam/x/1.html")
+
     def test_vieclam24h_listing_failure_is_not_empty_success(self):
         crawler = Vieclam24hCrawler.__new__(Vieclam24hCrawler)
         crawler.source_name = "vieclam24h"

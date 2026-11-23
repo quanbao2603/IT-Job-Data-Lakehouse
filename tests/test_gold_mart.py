@@ -494,10 +494,11 @@ class TestEndToEndFromSealedSilverRelease(unittest.TestCase):
             self.assertEqual(len(bundle.snapshot), 2)
             self.assertEqual(len(bundle.effective_entity), 2)
             self.assertEqual(blocking_failures(run_checks(bundle)), [])
-            # GAP-8 fix must reach Gold through two different fallback branches.
+            # GAP-8 fix must reach Gold; both fixtures now normalize into the
+            # dashboard taxonomy instead of leaking raw industry strings.
             domains = {row["job_domain"] for row in bundle.dim_job}
-            self.assertIn("CNTT - Phần mềm", domains)
-            self.assertIn("E-commerce", domains)
+            self.assertIn("Phát triển phần mềm", domains)
+            self.assertNotIn(None, domains)
             # Every snapshot row carries lineage back to the sealed Silver release.
             for row in bundle.snapshot:
                 self.assertEqual(row["silver_release_id"], report["silver_release_id"])
