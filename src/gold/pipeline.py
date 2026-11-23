@@ -187,11 +187,14 @@ def build_bundle(
     )
     conflicts.extend(entity_conflicts)
     link_rows, link_conflicts = build_effective_link(
-        [*(historical_links or ()), *(links or ())], cutoff=resolved_cutoff
+        # Current release first: when an observation/link appears in both history and
+        # the current release, the freshly derived row must win the dedupe. History
+        # first kept the pre-fix company/city/domain of every replayed observation.
+        [*(links or ()), *(historical_links or ())], cutoff=resolved_cutoff
     )
     conflicts.extend(link_conflicts)
     observation_rows, observation_conflicts = build_source_observation(
-        [*(release_history_observations or ()), *(observations or ())],
+        [*(observations or ()), *(release_history_observations or ())],
         cutoff=resolved_cutoff,
         effective_links=link_rows,
     )

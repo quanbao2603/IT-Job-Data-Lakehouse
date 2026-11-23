@@ -11,6 +11,7 @@ from typing import Any, Iterable, Optional
 from src.etl.entity_lifecycle import choose_canonical
 from src.etl.transformers import COMPANY_NORMALIZATION_VERSION
 from src.gold.contract import UNKNOWN
+from src.gold.contract import city_bucket
 from src.gold.load_dimensions import city_bucket_of, job_key, resolve_company_key
 from src.gold.timeutil import parse_date, parse_utc
 
@@ -73,6 +74,14 @@ def build_dim_job_row(
         or (representative or {}).get("work_mode")
     )
     job_domain = (representative or {}).get("job_domain")
+    # An entity can outlive its observations (the current release may not include a
+    # fresh observation for it). Falling back to the entity's canonical city keeps a
+    # known location instead of overwriting it with UNKNOWN.
+    city_value = city_bucket_of(representative)
+    if city_value == UNKNOWN:
+        canonical_city = str(entity.get("canonical_location") or "").strip()
+        if canonical_city:
+            city_value = city_bucket(canonical_city)
     return {
         "job_key": job_key(unified_job_id, version_seq),
         "unified_job_id": unified_job_id,
@@ -80,7 +89,7 @@ def build_dim_job_row(
         "canonical_title": str(entity.get("canonical_title") or UNKNOWN),
         "company_key": company,
         "canonical_location": entity.get("canonical_location"),
-        "city_bucket": city_bucket_of(representative),
+        "city_bucket": city_value,
         "job_domain": job_domain,
         "job_level": job_level,
         "work_mode": work_mode,
