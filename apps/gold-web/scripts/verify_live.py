@@ -8,6 +8,7 @@ pass/fail per check, and exits non-zero on any mismatch.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,34 @@ from typing import Any
 APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
+
+
+def _load_env_files() -> None:
+    """Load DB settings when the caller did not source web.env.
+
+    The production service gets its configuration from the systemd EnvironmentFile, but
+    a manual `verify_live.py` run has nothing loaded, which surfaced as an opaque
+    JSONDecodeError instead of a verification result.
+    """
+    if os.getenv("GOLD_DB_READER_PASSWORD") or os.getenv("GOLD_DB_PASSWORD"):
+        return
+    candidates = [
+        APP_ROOT / ".env",
+        Path("/home/womcloud/services/it-insight/config/web.env"),
+        Path.home() / "airflow/airflow.env",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_env_files()
 
 from server.config import get_settings  # noqa: E402
 from server.repository import GoldRepository  # noqa: E402
