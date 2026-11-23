@@ -15,4 +15,7 @@ Release: `silver_release_manual_facet_fix_20261123_162842` · tổng observation
 | 9 | Trưởng Phòng CNTT | https://www.topcv.vn/viec-lam/truong-phong-cntt/2296439.html | `{{ company?.name }}` | — | Lead |
 | 10 | Trưởng NhómTester | https://www.topcv.vn/viec-lam/truong-nhom-tester/2336650.html | `{{ company?.name }}` | — | Lead |
 
-Mở URL bằng trình duyệt sẽ thấy TopCV hiển thị tên công ty; dữ liệu Bronze của mình chỉ có chuỗi template `{{ company?.name }}` vì trang trả về chưa render.
+Mở URL bằng trình duyệt sẽ thấy TopCV hiển thị tên công ty. Lỗi nằm ở parser: nó đọc
+`div.company-name` (node template Angular) thay vì
+`.box-company-info-detail .company-name-label a.name`, nên Bronze lưu `{{ company?.name }}`.
+Đã sửa ở crawler (`1a190d6`); các bản ghi cũ cần crawl lại vì Bronze không lưu HTML gốc.

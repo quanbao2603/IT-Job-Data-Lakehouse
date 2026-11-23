@@ -102,12 +102,18 @@ Bronze, (b) entity đang mở nhưng không có observation mới trong release 
 tên công ty, trong đó **1.280 đến từ TopCV** và **30 từ Devwork** — không có nền tảng nào
 khác. Nguyên nhân:
 
-- TopCV: crawler lưu chuỗi template `{{ company?.name }}` (trang chưa render) → transform
-  đánh dấu UNKNOWN đúng, nhưng dữ liệu nguồn thực sự không có tên.
+- TopCV: **lỗi selector ở crawler**. HTML của TopCV có tên công ty thật trong
+  `.box-company-info-detail .company-name-label a.name`, nhưng parser cũ tìm
+  `div.company-name` — node template Angular — nên lưu đúng chuỗi `{{ company?.name }}`.
+  Đã sửa: đọc đúng block công ty (tên, quy mô, địa chỉ, ngành nghề) và đọc địa điểm/cấp
+  bậc từ `.job-detail__info--section-content`; fixture lấy từ trang thật nằm ở
+  `tests/fixtures/topcv_job_detail.html`.
 - Devwork: nền tảng này ẩn nhà tuyển dụng, ghi literal "Công ty đang tuyển dụng".
 
-TopCV hiện vẫn trả **HTTP 403** kể cả khi gửi cookie phiên (`cf_clearance`,
-`topcv_session`) và header trình duyệt đầy đủ, nên chưa thể crawl lại để lấy tên công ty.
+Dữ liệu Bronze cũ chỉ lưu field đã bóc tách (không lưu HTML gốc), nên 1.280 tin đã cào
+không thể sửa hồi tố — phải crawl lại. TopCV hiện trả **HTTP 403** kể cả khi gửi cookie
+phiên (`cf_clearance`, `topcv_session`) và header trình duyệt đầy đủ, nên lần crawl lại
+đang bị chặn.
 
 Đã sửa ở Gold: `resolve_company_key` coi marker `UNKNOWN`/`N/A`/rỗng là thành viên
 `is_unknown` thay vì tạo một công ty thật tên "UNKNOWN". Vì vậy:
