@@ -45,9 +45,13 @@ BLANK_COMPANY = {"", "UNKNOWN", "N/A", "CHƯA XÁC ĐỊNH"}
 
 def load_checkpoint() -> dict:
     if not CHECKPOINT_PATH.exists():
-        return {"done": [], "committed": 0}
+        return {"done": [], "gone": [], "committed": 0}
     data = json.loads(CHECKPOINT_PATH.read_text())
     data.setdefault("done", [])
+    # Listings TopCV has deleted answer with its generic search page. They are recorded
+    # so each pass skips them: otherwise the same 25 dead URLs are retried forever and
+    # the backfill never reaches the live ones behind them.
+    data.setdefault("gone", [])
     data.setdefault("committed", 0)
     return data
 
@@ -81,7 +85,10 @@ def target_urls(limit: int | None, only_missing: bool) -> list[str]:
     ordered = sorted(urls)
     print(f"release {release.release_id}: {len(ordered)} topcv urls to fetch "
           f"(only_missing={only_missing})", flush=True)
-    return ordered[:limit] if limit else ordered
+    # The caller filters out URLs already in the checkpoint, so the limit must be
+    # applied to the *remaining* work, never to the full list: slicing first handed
+    # back 25 already-fetched URLs on every pass, which is why passes gained nothing.
+    return ordered
 
 
 def pending_records(committed: int) -> list[dict]:
@@ -150,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
 
     checkpoint = load_checkpoint()
     done: set[str] = set(checkpoint["done"])
+    gone: set[str] = set(checkpoint["gone"])
     state = StateManager(str(STATE_DB))
 
     # Records written by a run that was killed before its flush are committed first.
@@ -159,8 +167,11 @@ def main(argv: list[str] | None = None) -> int:
         checkpoint["committed"] += flush(state, stale)
         save_checkpoint(checkpoint)
 
-    urls = [u for u in target_urls(args.limit, args.only_missing) if u not in done]
-    print(f"remaining: {len(urls)} (already done: {len(done)})", flush=True)
+    remaining = [u for u in target_urls(args.limit, args.only_missing)
+                 if u not in done and u not in gone]
+    urls = remaining[:args.limit] if args.limit else remaining
+    print(f"remaining: {len(remaining)} | this pass: {len(urls)} "
+          f"(already done: {len(done)}, gone: {len(gone)})", flush=True)
 
     crawler = TopCVCrawler()
     collected = 0
@@ -184,7 +195,12 @@ def main(argv: list[str] | None = None) -> int:
         try:
             item = crawler._parse_job_detail_raw(html, url)
         except Exception as exc:  # noqa: BLE001
-            print(f"[{index}/{len(urls)}] parse error: {exc} | {url}", flush=True)
+            # "template chưa render" on this source means the listing is gone, not that
+            # the parser is broken: record it and move on instead of retrying forever.
+            gone.add(url)
+            checkpoint["gone"] = sorted(gone)
+            save_checkpoint(checkpoint)
+            print(f"[{index}/{len(urls)}] gone: {url}", flush=True)
             continue
         if not item.get("company_name"):
             print(f"[{index}/{len(urls)}] no company parsed: {url}", flush=True)
