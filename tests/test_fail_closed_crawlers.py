@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -143,8 +144,12 @@ class TestFailClosedCrawlers(unittest.TestCase):
         self.assertNotIn("User-Agent", session_factory.return_value.headers)
 
     def test_topcv_cools_down_before_next_burst(self):
+        # A live crawl may hold a real 403 cooldown file; the test must never read it.
+        cooldown_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, cooldown_dir, True)
         crawler = TopCVCrawler.__new__(TopCVCrawler)
         crawler.source_name = "topcv"
+        crawler.cooldown_state_path = os.path.join(cooldown_dir, "topcv_cooldown.json")
         calls = []
 
         def get(_url, **_kwargs):

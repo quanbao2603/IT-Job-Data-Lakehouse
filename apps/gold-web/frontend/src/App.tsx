@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle, ArrowRight, Bot, Building2, BriefcaseBusiness, CheckCircle2, Coins,
-  Database, Download, Info, LayoutDashboard, Lock, RefreshCw, Search, ShieldCheck,
+  Download, ExternalLink, Info, LayoutDashboard, Lock, RefreshCw, Search, ShieldCheck,
   Sparkles, Tags, X,
 } from 'lucide-react'
 import {
@@ -32,7 +32,7 @@ const PAGE_SUBTITLES: Record<Page, string> = {
   overview: 'Bức tranh tổng quan từ release Gold đang được công bố.',
   jobs: 'Tìm kiếm và khám phá những tin mà hệ thống đã ghi nhận.',
   skills: 'Kỹ năng nào xuất hiện trong tin tuyển dụng và thường đi cùng nhau.',
-  companies: 'Cơ cấu tin tuyển dụng của từng doanh nghiệp trong snapshot.',
+  companies: 'Cơ cấu tin tuyển dụng của từng doanh nghiệp trong dữ liệu đang công bố.',
   quality: 'Các kiểm tra chất lượng và độ phủ của release đang phục vụ.',
   assistant: 'Không gian hỏi đáp với dữ liệu thị trường tuyển dụng.',
 }
@@ -75,6 +75,13 @@ function initials(name: string) {
   const first = words[0] ?? ''
   const last = words[words.length - 1] ?? first
   return `${first.charAt(0)}${last.charAt(0)}`.toUpperCase()
+}
+function safeHost(url: string) {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
 }
 
 type Snapshot = {
@@ -250,19 +257,12 @@ export default function App() {
         >{PAGE_ICONS[key]}<span>{PAGE_LABELS[key]}</span>{key === 'assistant' && <small className="nav-badge" aria-hidden="true">AI</small>}</button>)}
       </nav>
 
-      <div className="sidebar-note">
-        <Database size={19} className="sidebar-note-icon" aria-hidden />
-        <strong>Dữ liệu có nguồn gốc</strong>
-        <p>Tin tuyển dụng đi qua Bronze → Silver → Gold trước khi hiển thị. Số liệu thuộc release Gold đang công bố.</p>
-        <span>BRONZE · SILVER · GOLD</span>
-      </div>
-
       <div className="sidebar-bottom">
         <button type="button" className="sidebar-status" onClick={() => setPage('quality')}>
           <span className={meta?.stale ? 'dot stale-dot' : 'dot'} aria-hidden />
           <span>
-            <b>{meta ? (meta.stale ? 'Dữ liệu cũ' : 'Trong ngưỡng mới') : 'Đang kiểm tra'}</b>
-            <small>{meta ? `Snapshot ${formatDay(meta.snapshot_date)}` : 'Chưa có release'}</small>
+            <b>{meta ? (meta.stale ? 'Dữ liệu cũ' : 'cập nhật mới') : 'Đang kiểm tra'}</b>
+            <small>{meta ? `cập nhật ngày ${formatDay(meta.snapshot_date)}` : 'Chưa có dữ liệu'}</small>
           </span>
         </button>
         <div className="sidebar-profile">
@@ -297,8 +297,8 @@ export default function App() {
           <div className="heading-actions">
             <span className="snapshot-chip">
               <span className={meta?.stale ? 'dot stale-dot' : 'dot'} aria-hidden />
-              Snapshot <b>{formatDay(meta?.snapshot_date)}</b>
-              {meta && <span className="chip-age">{number.format(meta.age_days)} ngày trước</span>}
+              cập nhật ngày <b>{formatDay(meta?.snapshot_date)}</b>
+              {meta && meta.age_days > 0 && <span className="chip-age">{number.format(meta.age_days)} ngày trước</span>}
             </span>
             <button type="button" className="button primary" onClick={() => setReloadToken((t) => t + 1)}>
               <RefreshCw size={15} className={busy ? 'spin' : undefined} aria-hidden /> Làm mới
@@ -312,7 +312,7 @@ export default function App() {
         </div>}
         {meta?.stale && <div className="banner warn" role="status">
           <AlertCircle size={16} aria-hidden />
-          <p>Snapshot cách đây {meta.age_days} ngày (ngưỡng {meta.stale_after_days} ngày). Số liệu vẫn là release đang công bố, không phải dữ liệu hôm nay.</p>
+          <p>Dữ liệu cập nhật cách đây {meta.age_days} ngày (ngưỡng {meta.stale_after_days} ngày). Số liệu vẫn là bản đang công bố, không phải dữ liệu hôm nay.</p>
         </div>}
 
         {page !== 'quality' && page !== 'assistant' && <FilterBar
@@ -422,16 +422,15 @@ function ReleaseNote({ meta }: { meta: Meta }) {
   return <div className="release-note">
     <span className={meta.stale ? 'dot stale-dot' : 'dot'} aria-hidden />
     <span>
-      Release <b>{meta.gold_release_id}</b> · cutoff {formatDate(meta.snapshot_cutoff_at)} · {meta.stale ? 'dữ liệu đã cũ theo ngưỡng hiển thị' : 'đang trong ngưỡng freshness'}
+      cập nhật ngày <b>{formatDay(meta.snapshot_date)}</b>
     </span>
   </div>
 }
 
 function Overview({ data, onCompany, onSkill }: { data: DashboardResponse; onCompany: (key: string) => void; onSkill: (code: string) => void }) {
   return <>
-    <ReleaseNote meta={data.meta} />
     <div className="metric-grid">
-      <Metric icon={<BriefcaseBusiness size={18} aria-hidden />} tone="green" label="Tin hợp nhất được quan sát" value={number.format(data.summary.jobs)} note="Theo snapshot Gold" />
+      <Metric icon={<BriefcaseBusiness size={18} aria-hidden />} tone="green" label="Tin hợp nhất được quan sát" value={number.format(data.summary.jobs)} note="Theo dữ liệu Gold" />
       <Metric icon={<Building2 size={18} aria-hidden />} tone="blue" label="Doanh nghiệp" value={number.format(data.summary.companies)} note="Không tính nhóm chưa xác định" />
       <Metric icon={<Sparkles size={18} aria-hidden />} tone="purple" label="Kỹ năng xuất hiện" value={number.format(data.summary.skills)} note="Skill hợp lệ trong cohort" />
       <Metric
@@ -443,12 +442,8 @@ function Overview({ data, onCompany, onSkill }: { data: DashboardResponse; onCom
         note={data.summary.salary_samples === 0 ? 'Chưa có mẫu lương hợp lệ' : `${number.format(data.summary.salary_samples)} mẫu hợp lệ`}
       />
     </div>
-    <p className="definition">
-      <Info size={14} aria-hidden />
-      Lương: trung vị của trung điểm khoảng lương VND trên các tin có đủ min/max hợp lệ. Quan sát gần nhất: {formatDate(data.summary.last_seen_at)}.
-    </p>
     <div className="overview-charts">
-      <Distribution title="Theo chuyên môn" hint="Số tin trong snapshot · tối đa 8 nhóm" items={data.domains} />
+      <Distribution title="Theo chuyên môn" hint="Số tin trong dữ liệu · tối đa 8 nhóm" items={data.domains} />
       <Donut title="Theo địa điểm" hint="Địa điểm đại diện của mỗi tin" items={data.cities} />
     </div>
     <div className="overview-bottom">
@@ -469,7 +464,7 @@ function Overview({ data, onCompany, onSkill }: { data: DashboardResponse; onCom
     </div>
     <div className="grid-two">
       <Distribution title="Theo cấp bậc" hint="Cấp bậc chuẩn hóa của tin" items={data.levels} />
-      <Distribution title="Nền tảng có bằng chứng gần đây" hint="Nguồn quan sát trong cửa sổ release" items={data.platforms} />
+      <Distribution title="nền tảng" hint="Số tin theo từng nguồn dữ liệu" items={data.platforms} />
     </div>
   </>
 }
@@ -576,7 +571,6 @@ function Jobs({ data, sort, onSort, onSelect, onExport, onPage }: {
 }) {
   const totalPages = Math.max(1, Math.ceil(data.total / data.page_size))
   return <>
-    <ReleaseNote meta={data.meta} />
     <div className="toolbar">
       <span>{number.format(data.total)} tin trong cohort</span>
       <div className="inline-actions">
@@ -616,6 +610,7 @@ function Jobs({ data, sort, onSort, onSelect, onExport, onPage }: {
               <span><em>Hình thức</em>{bucketLabel(display(job.work_mode))}</span>
             </div>
             <div className="skill-tags">
+              {job.skills.length === 0 && <span className="muted">Chưa ghi nhận kỹ năng</span>}
               {job.skills.slice(0, 6).map((skill) => <span key={skill.skill_code}>{skill.skill_name}</span>)}
               {job.skills.length > 6 && <span className="more-tag">+{job.skills.length - 6} kỹ năng</span>}
               {job.platforms.slice(0, 2).map((platform) => <span className="source-tag" key={platform}>{platform}</span>)}
@@ -623,8 +618,17 @@ function Jobs({ data, sort, onSort, onSelect, onExport, onPage }: {
           </div>
           <div className="job-side">
             <strong className={job.salary_sample_flag ? 'salary' : 'salary muted-salary'}>{job.salary_sample_flag ? formatMoney(job.salary_midpoint_vnd) : 'Chưa có lương'}</strong>
-            <small>Quan sát gần nhất<br />{formatDate(job.last_seen_at)}</small>
-            <small>{job.source_count} nguồn · {job.skills.length} kỹ năng</small>
+            <small>cập nhật gần nhất<br />{formatDate(job.last_seen_at)}</small>
+            <small>{job.source_count} nguồn · {job.skills.length > 0 ? `${job.skills.length} kỹ năng` : 'Chưa ghi nhận kỹ năng'}</small>
+            {job.source_url
+              ? <a
+                className="button small source-link"
+                href={job.source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(event) => event.stopPropagation()}
+              >Xem tin gốc <ExternalLink size={13} aria-hidden /></a>
+              : <small className="muted">Chưa có liên kết nguồn</small>}
             <span className="button small detail-button">Xem chi tiết <ArrowRight size={13} aria-hidden /></span>
           </div>
         </article>) : <div className="empty-card">Không có tin phù hợp với bộ lọc hiện tại.</div>}
@@ -643,11 +647,10 @@ function Jobs({ data, sort, onSort, onSelect, onExport, onPage }: {
 function Skills({ data, onSkill }: { data: SkillsResponse; onSkill: (code: string) => void }) {
   const max = Math.max(1, ...data.items.map((item) => item.job_count))
   return <>
-    <ReleaseNote meta={data.meta} />
     <div className="skills-layout">
       <section className="panel">
         <div className="panel-heading">
-          <div><h2>Kỹ năng trong tin tuyển dụng</h2><p>Đếm theo tin duy nhất trong cohort</p></div>
+          <div><h2>Kỹ năng trong tin tuyển dụng</h2></div>
           <span className="muted-badge">{number.format(data.items.length)} kỹ năng</span>
         </div>
         <div className="table-wrap">
@@ -679,7 +682,6 @@ function Skills({ data, onSkill }: { data: SkillsResponse; onSkill: (code: strin
             <p><strong>{number.format(item.job_count)}</strong> <small>tin cùng nhắc đến</small></p>
           </div>)}
         </div>
-        <p className="panel-note">Đồng xuất hiện thể hiện kỹ năng được nhắc trong cùng tin, không phải quan hệ nhân quả.</p>
       </section>
     </div>
   </>
@@ -718,14 +720,38 @@ function Quality({ data }: { data: QualityResponse }) {
   const passed = data.checks.filter((check) => check.passed).length
   const allPassed = data.checks.length > 0 && passed === data.checks.length
   return <>
-    <ReleaseNote meta={data.meta} />
     <div className={allPassed ? 'quality-summary' : 'quality-summary warn'}>
       <CheckCircle2 size={26} aria-hidden />
       <div>
-        <strong>{passed}/{data.checks.length} kiểm tra đạt</strong>
-        <p>DQ và coverage của release đang phục vụ · snapshot {formatDay(data.meta.snapshot_date)}</p>
+        <strong>Đạt quy tắc kiểm tra: {passed}/{data.checks.length}</strong>
+        <p>Quy tắc kiểm tra chất lượng dữ liệu · cập nhật ngày {formatDay(data.meta.snapshot_date)}</p>
       </div>
     </div>
+    <section className="panel">
+      <div className="panel-heading"><div><h2>Mức độ đầy đủ dữ liệu</h2><p>Đạt quy tắc kiểm tra không có nghĩa mọi trường đều đầy đủ</p></div></div>
+      <div className="completeness-grid">
+        <div className="completeness-item">
+          <strong>{number.format(data.completeness.with_salary)}</strong>
+          <span>tin có lương hợp lệ</span>
+          <small>{data.completeness.with_salary_pct}% tổng số tin</small>
+        </div>
+        <div className="completeness-item">
+          <strong>{number.format(data.completeness.with_city)}</strong>
+          <span>tin có địa điểm</span>
+          <small>{data.completeness.with_city_pct}% tổng số tin</small>
+        </div>
+        <div className="completeness-item">
+          <strong>{number.format(data.completeness.with_level)}</strong>
+          <span>tin có cấp bậc</span>
+          <small>{data.completeness.with_level_pct}% tổng số tin</small>
+        </div>
+        <div className="completeness-item">
+          <strong>{number.format(data.completeness.with_domain)}</strong>
+          <span>tin có chuyên môn</span>
+          <small>{data.completeness.with_domain_pct}% tổng số tin</small>
+        </div>
+      </div>
+    </section>
     <section className="panel">
       <div className="panel-heading"><div><h2>Kết quả kiểm tra chất lượng</h2><p>Quy tắc, mức độ và giá trị thực tế</p></div></div>
       <div className="table-wrap">
@@ -740,9 +766,9 @@ function Quality({ data }: { data: QualityResponse }) {
       </div>
     </section>
     <section className="panel">
-      <div className="panel-heading"><div><h2>Lịch sử độ phủ snapshot</h2><p>Các ngày đã ghi nhận trong bảng kiểm soát</p></div><span className="muted-badge">Tối đa 30 ngày</span></div>
+      <div className="panel-heading"><div><h2>Lịch sử độ phủ dữ liệu</h2><p>Các ngày đã ghi nhận trong bảng kiểm soát</p></div><span className="muted-badge">Tối đa 30 ngày</span></div>
       <div className="table-wrap">
-        <div className="table-head coverage-columns"><span>Ngày snapshot</span><span>Trạng thái</span><span className="num">Release</span></div>
+        <div className="table-head coverage-columns"><span>Ngày cập nhật</span><span>Trạng thái</span><span className="num">Bản công bố</span></div>
         {data.coverage.length === 0 && <p className="muted" style={{ padding: '0 21px 18px' }}>Chưa có lịch sử coverage.</p>}
         {data.coverage.map((row) => <div className="check-row coverage-columns" key={row.snapshot_date}>
           <span>{row.snapshot_date}</span>
@@ -777,7 +803,7 @@ function Assistant({ status }: { status: AssistantStatus | null }) {
       <h3>Câu trả lời gắn với dữ liệu</h3>
       <p>Khi được tích hợp, trợ lý chỉ dùng số liệu từ Gold và nêu rõ phạm vi:</p>
       <ul>
-        <li><CheckCircle2 size={14} aria-hidden /> Ngày snapshot và release nguồn</li>
+        <li><CheckCircle2 size={14} aria-hidden /> Ngày cập nhật và nguồn dữ liệu</li>
         <li><CheckCircle2 size={14} aria-hidden /> Bộ lọc đang áp dụng</li>
         <li><CheckCircle2 size={14} aria-hidden /> Số mẫu dùng để tính lương</li>
         <li><CheckCircle2 size={14} aria-hidden /> Giới hạn của dữ liệu thu thập</li>
@@ -842,19 +868,27 @@ function JobModal({ jobId, releaseId, onClose }: { jobId: string; releaseId?: st
           <div><small>Hình thức</small><b>{display(job.work_mode)}</b></div>
           <div><small>Lương midpoint</small><b>{job.salary_sample_flag ? formatMoney(job.salary_midpoint_vnd) : 'Chưa có dữ liệu'}</b></div>
           <div><small>Số nguồn</small><b>{job.source_count}</b></div>
-          <div><small>Quan sát gần nhất</small><b>{formatDate(job.last_seen_at)}</b></div>
-          <div><small>Snapshot cutoff</small><b>{formatDate(job.snapshot_cutoff_at)}</b></div>
+          <div><small>cập nhật gần nhất</small><b>{formatDate(job.last_seen_at)}</b></div>
+          <div><small>Cập nhật lúc</small><b>{formatDate(job.snapshot_cutoff_at)}</b></div>
           <div><small>Trạng thái entity</small><b>{job.entity_status}</b></div>
         </div>
         <h3>Kỹ năng</h3>
         <div className="skill-tags large">
           {job.skills.length ? job.skills.map((skill) => <span key={skill.skill_code}>{skill.skill_name}</span>) : <span>Chưa xác định</span>}
         </div>
-        <h3>Nền tảng có bằng chứng</h3>
-        <div className="skill-tags large">
-          {job.platforms.length ? job.platforms.map((platform) => <span className="source-tag" key={platform}>{platform}</span>) : <span>Chưa xác định</span>}
-        </div>
-        <p className="modal-note">Đây là tin hợp nhất được hệ thống quan sát; không phải khẳng định listing vẫn còn trực tuyến trên nguồn. Gold hiện không cung cấp URL/description đã kiểm chứng cho web.</p>
+        <h3>Nguồn đăng tuyển</h3>
+        {job.source_urls.length > 0
+          ? <ul className="source-list">
+            {job.source_urls.map((link) => <li key={link.url}>
+              <a href={link.url} target="_blank" rel="noopener noreferrer">
+                <span className="source-tag">{link.platform}</span>
+                <span className="source-host">{safeHost(link.url)}</span>
+                <ExternalLink size={13} aria-hidden />
+              </a>
+            </li>)}
+          </ul>
+          : <p className="muted">Chưa có liên kết nguồn cho tin này.</p>}
+        <p className="modal-note">Đây là tin hợp nhất được hệ thống quan sát; không phải khẳng định listing vẫn còn trực tuyến trên nguồn.</p>
       </>}
     </div>
   </div>

@@ -15,6 +15,7 @@ from src.etl.transformers import (
     COMPANY_NORMALIZATION_VERSION,
     SKILL_TAXONOMY,
     SKILL_TAXONOMY_VERSION,
+    skill_display_name,
     clean_company_name,
 )
 from src.gold.contract import CITY_AXIS, PLATFORMS, UNKNOWN
@@ -97,7 +98,7 @@ def build_dim_skill(
     """One key per taxonomy code; unmapped observations are reported, never invented."""
     rows = [
         {"skill_key": skill_key(code, taxonomy_version), "taxonomy_version": taxonomy_version,
-         "skill_code": code, "skill_name": code.title(), "skill_group": None, "is_unknown": False}
+         "skill_code": code, "skill_name": skill_display_name(code), "skill_group": None, "is_unknown": False}
         for code in SKILL_TAXONOMY
     ]
     known = {str(code).casefold() for code in SKILL_TAXONOMY}

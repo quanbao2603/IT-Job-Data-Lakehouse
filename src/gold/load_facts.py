@@ -110,10 +110,20 @@ def build_platform_facts(
         platform = str(observation.get("platform") or "").strip().casefold()
         bucket = grouped.setdefault((unified_job_id, platform), {
             "source_job_ids": set(), "observation_count": 0, "last_observed_at": None,
+            "source_url": None,
         })
         bucket["source_job_ids"].add(str(observation.get("source_job_id") or ""))
         bucket["observation_count"] += 1
         observed_at = parse_utc(observation.get("observed_at"))
+        # The newest observation of this platform wins, so a job whose source URL was
+        # only fixed by a later backfill still exposes the corrected link.
+        url = observation.get("canonical_url") or observation.get("source_url")
+        if url and (
+            bucket["source_url"] is None
+            or (observed_at is not None and observed_at >= (bucket["source_url_at"] or observed_at))
+        ):
+            bucket["source_url"] = str(url)
+            bucket["source_url_at"] = observed_at
         if bucket["last_observed_at"] is None or (
             observed_at is not None and observed_at > bucket["last_observed_at"]
         ):
@@ -143,6 +153,7 @@ def build_platform_facts(
             "last_observed_at": last_observed,
             "freshness_days": max(0, int(freshness or 0)),
             "evidence_window_days": window_days,
+            "source_url": bucket["source_url"],
             "snapshot_cutoff_at": parse_utc(cutoff_at),
             "silver_release_id": silver_release_id,
         })

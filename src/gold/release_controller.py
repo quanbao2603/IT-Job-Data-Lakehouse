@@ -55,7 +55,7 @@ FACT_SPECS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "gold.fact_job_platform_daily": (
         ("gold_release_id", "snapshot_date", "date_key", "unified_job_id", "job_key", "platform_key",
          "company_key", "job_platform_count", "source_listing_count", "observation_count_in_window",
-         "last_observed_at", "freshness_days", "evidence_window_days", "snapshot_cutoff_at",
+         "last_observed_at", "freshness_days", "evidence_window_days", "source_url", "snapshot_cutoff_at",
          "silver_release_id"),
         ("gold_release_id", "snapshot_date", "unified_job_id", "platform_key"),
     ),

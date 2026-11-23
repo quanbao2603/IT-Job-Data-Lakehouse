@@ -47,6 +47,8 @@ export type Job = {
   snapshot_cutoff_at?: string
   skills: { skill_code: string; skill_name: string }[]
   platforms: string[]
+  source_url: string | null
+  source_urls: { platform: string; url: string; last_observed_at: string | null }[]
 }
 export type DashboardResponse = {
   meta: Meta
@@ -60,6 +62,13 @@ export type QualityResponse = {
   meta: Meta
   checks: { check_code: string; check_name: string; severity: string; passed: boolean; expected: string; actual: string; checked_at: string }[]
   coverage: { snapshot_date: string; status: string; gold_release_id: string | null; silver_release_id: string | null; sla_breached: boolean }[]
+  completeness: {
+    jobs: number
+    with_salary: number; with_salary_pct: number
+    with_city: number; with_city_pct: number
+    with_level: number; with_level_pct: number
+    with_domain: number; with_domain_pct: number
+  }
 }
 export type AssistantStatus = { enabled: boolean; status: string; message: string; examples: string[] }
 

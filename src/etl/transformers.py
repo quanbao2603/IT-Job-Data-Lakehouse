@@ -41,6 +41,56 @@ SKILL_TAXONOMY = (
 # Versioned normalization contracts. Gold records these in gold_control.load_run so a
 # taxonomy or naming-rule change can never silently rewrite historical reports.
 SKILL_TAXONOMY_VERSION = "skill-taxonomy-v1"
+
+# Display names for acronyms and product spellings that `str.title()` gets wrong
+# ("Sql", "Aws", "Javascript"). The taxonomy key stays lowercase; only the label
+# rendered on the dashboard is corrected.
+SKILL_DISPLAY_NAMES = {
+    "sql": "SQL", "nosql": "NoSQL", "html": "HTML", "css": "CSS", "aws": "AWS",
+    "gcp": "GCP", "ec2": "EC2", "s3": "S3", "rds": "RDS", "vpc": "VPC",
+    "iam": "IAM", "jwt": "JWT", "oauth": "OAuth", "api": "API",
+    "rest api": "REST API", "graphql": "GraphQL", "grpc": "gRPC",
+    "javascript": "JavaScript", "typescript": "TypeScript",
+    "postgresql": "PostgreSQL", "mysql": "MySQL", "mariadb": "MariaDB",
+    "mongodb": "MongoDB", "sqlite": "SQLite", "sql server": "SQL Server",
+    "dynamodb": "DynamoDB", "bigquery": "BigQuery", "snowflake": "Snowflake",
+    "databricks": "Databricks", "pyspark": "PySpark", "hadoop": "Hadoop",
+    "kafka": "Kafka", "rabbitmq": "RabbitMQ", "redis": "Redis",
+    "elasticsearch": "Elasticsearch", "firebase": "Firebase", "supabase": "Supabase",
+    "airflow": "Airflow", "dbt": "dbt", "etl": "ETL", "elt": "ELT",
+    "next.js": "Next.js", "nuxt.js": "Nuxt.js", "node.js": "Node.js",
+    "express": "Express", "nestjs": "NestJS", "django": "Django", "flask": "Flask",
+    "fastapi": "FastAPI", "spring": "Spring", "spring boot": "Spring Boot",
+    ".net": ".NET", "laravel": "Laravel", "rails": "Rails",
+    "docker": "Docker", "kubernetes": "Kubernetes", "helm": "Helm",
+    "terraform": "Terraform", "ansible": "Ansible", "jenkins": "Jenkins",
+    "github actions": "GitHub Actions", "gitlab ci": "GitLab CI",
+    "azure devops": "Azure DevOps", "azure": "Azure", "cloudfront": "CloudFront",
+    "redshift": "Redshift", "spark": "Spark", "tensorflow": "TensorFlow",
+    "pytorch": "PyTorch", "scikit-learn": "scikit-learn", "pandas": "pandas",
+    "numpy": "NumPy", "opencv": "OpenCV", "nlp": "NLP", "llm": "LLM",
+    "generative ai": "Generative AI", "computer vision": "Computer Vision",
+    "mlops": "MLOps", "devops": "DevOps", "sre": "SRE", "linux": "Linux",
+    "bash": "Bash", "qa": "QA", "ui/ux": "UI/UX", "jira": "Jira",
+    "confluence": "Confluence", "git": "Git", "github": "GitHub",
+    "gitlab": "GitLab", "bitbucket": "Bitbucket", "figma": "Figma",
+    "wordpress": "WordPress", "shopify": "Shopify", "php": "PHP",
+    "kotlin": "Kotlin", "swift": "Swift", "rust": "Rust", "golang": "Golang",
+    "scala": "Scala", "dart": "Dart", "ruby": "Ruby", "react": "React",
+    "angular": "Angular", "vue": "Vue", "selenium": "Selenium",
+    "cypress": "Cypress", "playwright": "Playwright", "postman": "Postman",
+    "agile": "Agile", "scrum": "Scrum", "kanban": "Kanban",
+    "penetration testing": "Penetration Testing", "cybersecurity": "Cybersecurity",
+    "unit testing": "Unit Testing", "testing": "Testing", "security": "Security",
+}
+
+
+def skill_display_name(code: str) -> str:
+    """Human label for a taxonomy code, keeping acronyms and product casing intact."""
+    key = str(code).strip()
+    if key.casefold() in SKILL_DISPLAY_NAMES:
+        return SKILL_DISPLAY_NAMES[key.casefold()]
+    return key.title()
 COMPANY_NORMALIZATION_VERSION = "company-normalization-v2"
 CITY_NORMALIZATION_VERSION = "city-normalization-v2"
 TRANSFORM_VERSION = "bronze-to-silver-transform-v2"
@@ -69,6 +119,30 @@ def normalize_text(value: Any) -> str:
 def normalize_title(value: Any) -> str:
     words = normalize_text(value).split()
     return " ".join(word for word in words if word not in TITLE_STOP_WORDS)
+
+
+# Platform decorations pasted in front of the real job title ("[ Hot Job ] Cloud
+# Solution Architect", "Phản hồi vượt trội Lập Trình Java"). Stripping them keeps the
+# card readable without inventing a new title.
+_TITLE_PREFIXES = (
+    r"^\[\s*hot(\s*job)?\s*\]\s*", r"^\[\s*new\s*\]\s*", r"^\[\s*gấp\s*\]\s*",
+    r"^\[\s*vip\s*\]\s*", r"^\[\s*tuyển\s*gấp\s*\]\s*",
+    r"^phản\s+hồi\s+(vượt\s+trội|thường\s+xuyên|nhanh)\s+",
+    r"^ứng\s+tuyển\s+nhanh\s+", r"^hot\s+job\s*[-:|]?\s*",
+)
+
+
+def clean_display_title(value: Any) -> str:
+    """Strip platform badges from a title for display; never touches job_title_normalized."""
+    text = normalize_text(value)
+    if not text:
+        return text
+    previous = None
+    while previous != text:
+        previous = text
+        for pattern in _TITLE_PREFIXES:
+            text = re.sub(pattern, "", text, flags=re.IGNORECASE).strip()
+    return text or previous or ""
 
 
 def _fold(value: Any) -> str:
@@ -447,7 +521,7 @@ def canonicalize_bronze_record(envelope: dict[str, Any], *, silver_updated_at: O
         "source_url": source_url, "canonical_url": make_canonical_url(source_url), "content_hash": content_hash,
         "crawled_at": _text(payload.get("scraped_at") or observed_at), "observed_at": observed_at,
         "ingested_at": metadata_ingested_at, "silver_updated_at": silver_updated_at or observed_at, "is_active": is_active,
-        "job_title": title, "job_title_normalized": normalize_title(title),
+        "job_title": clean_display_title(title), "job_title_normalized": normalize_title(title),
         "job_level": classify_job_level(
             payload.get("job_level") or payload.get("experience") or payload.get("experience_requirements"),
             title=title,

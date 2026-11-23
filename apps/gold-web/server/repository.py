@@ -400,9 +400,29 @@ class GoldRepository:
         platforms: dict[str, list[str]] = {}
         for job_id, code in cursor.fetchall():
             platforms.setdefault(job_id, []).append(code)
+        cursor.execute(
+            """
+            SELECT unified_job_id, platform_code, source_url, last_observed_at
+            FROM gold.v_job_source_url
+            WHERE unified_job_id = ANY(%s)
+            ORDER BY last_observed_at DESC, platform_code
+            """,
+            (ids,),
+        )
+        source_links: dict[str, list[dict[str, Any]]] = {}
+        for job_id, platform_code, url, last_observed in cursor.fetchall():
+            source_links.setdefault(job_id, []).append({
+                "platform": platform_code,
+                "url": url,
+                "last_observed_at": self._text(last_observed),
+            })
         for item in items:
             item["skills"] = skills.get(item["unified_job_id"], [])
             item["platforms"] = platforms.get(item["unified_job_id"], [])
+            links = source_links.get(item["unified_job_id"], [])
+            item["source_urls"] = links
+            # A single representative link for the card; the modal lists every platform.
+            item["source_url"] = links[0]["url"] if links else None
             for key in ("last_seen_at",):
                 item[key] = self._text(item.get(key))
 
@@ -517,6 +537,33 @@ class GoldRepository:
             context = self._release_context_from_cursor(cursor)
             if params is not None:
                 self._assert_expected_release(context, params)
+            # Passing every DQ rule does not mean every field is populated. This block
+            # reports field-level completeness so the two ideas stay separate.
+            cursor.execute(
+                """
+                SELECT COUNT(*)::int AS total,
+                       COUNT(*) FILTER (WHERE salary_sample_flag)::int AS with_salary,
+                       COUNT(*) FILTER (WHERE city_bucket <> 'UNKNOWN')::int AS with_city,
+                       COUNT(*) FILTER (WHERE job_level IS NOT NULL AND job_level <> 'UNKNOWN')::int AS with_level,
+                       COUNT(*) FILTER (WHERE job_domain IS NOT NULL AND job_domain <> 'UNKNOWN')::int AS with_domain
+                FROM gold.v_job_snapshot s JOIN gold.dim_job j ON j.job_key = s.job_key
+                """
+            )
+            completeness_row = cursor.fetchone()
+            total = int(completeness_row[0] or 0)
+            def pct(value: int) -> float:
+                return round(value / total * 100, 1) if total else 0.0
+            completeness = {
+                "jobs": total,
+                "with_salary": int(completeness_row[1] or 0),
+                "with_salary_pct": pct(int(completeness_row[1] or 0)),
+                "with_city": int(completeness_row[2] or 0),
+                "with_city_pct": pct(int(completeness_row[2] or 0)),
+                "with_level": int(completeness_row[3] or 0),
+                "with_level_pct": pct(int(completeness_row[3] or 0)),
+                "with_domain": int(completeness_row[4] or 0),
+                "with_domain_pct": pct(int(completeness_row[4] or 0)),
+            }
             cursor.execute(
                 """
                 SELECT check_code, check_name, severity, passed, expected, actual, diff, checked_at
@@ -539,4 +586,4 @@ class GoldRepository:
             for row in coverage:
                 for key in ("snapshot_date", "silver_ready_at", "gold_published_at", "bi_refreshed_at"):
                     row[key] = self._text(row.get(key))
-            return self._with_context(context, {"checks": checks, "coverage": coverage})
+            return self._with_context(context, {"checks": checks, "coverage": coverage, "completeness": completeness})

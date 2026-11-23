@@ -25,6 +25,16 @@ FROM gold.fact_job_skill_daily fact
 JOIN gold_control.active_release active ON active.id = 1
   AND active.gold_release_id = fact.gold_release_id;
 
+-- One row per (job, platform) with the original listing URL, so the web tier can
+-- link back to the source without touching Silver.
+CREATE OR REPLACE VIEW gold.v_job_source_url AS
+SELECT s.unified_job_id, p.platform_code, p.source_url, p.last_observed_at,
+       p.source_listing_count, p.freshness_days
+FROM gold.v_job_platform p
+JOIN gold.dim_platform pl ON pl.platform_key = p.platform_key
+JOIN gold.v_job_snapshot s ON s.unified_job_id = p.unified_job_id
+WHERE p.source_url IS NOT NULL;
+
 CREATE OR REPLACE VIEW gold.v_change_event AS
 SELECT fact.*
 FROM gold.fact_job_change_event fact

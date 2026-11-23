@@ -556,11 +556,17 @@ class TestSqlScripts(unittest.TestCase):
     def test_semantic_views_are_bound_to_active_release(self):
         statements = self._statements("semantic_views.sql")
         views = [s for s in statements if "CREATE OR REPLACE VIEW" in s.upper()]
-        self.assertEqual(len(views), 10)
+        # 10 release-bound views plus v_job_source_url, which joins the already-pinned
+        # platform view instead of re-reading the active_release pointer itself.
+        self.assertEqual(len(views), 11)
         fact_views = [s for s in views if "gold.fact_" in s]
         self.assertEqual(len(fact_views), 7)
         for view in fact_views:
             self.assertIn("gold_control.active_release", view)
+        url_view = [s for s in views if "v_job_source_url" in s]
+        self.assertEqual(len(url_view), 1)
+        # The URL view must be pinned too, transitively, through the platform view.
+        self.assertIn("gold.v_job_platform", url_view[0])
 
 
 class TestDimensionKeyClosure(unittest.TestCase):

@@ -80,15 +80,6 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   width: 3px; height: 20px; border-radius: 0 3px 3px 0; background: #a0e2c7;
 }
 
-.sidebar-note {
-  border: 1px solid #315052; background: var(--sidebar-2); border-radius: 10px;
-  padding: 15px 14px; margin: 26px 4px 0;
-}
-.sidebar-note-icon { color: #94c7b9; display: block; margin-bottom: 10px; }
-.sidebar-note strong { display: block; font-size: 13px; font-weight: 600; color: #dae8e3; }
-.sidebar-note p { font-size: 12px; color: #9dbcbb; line-height: 1.7; margin-top: 7px; }
-.sidebar-note > span { display: block; font-size: 9px; letter-spacing: 1.2px; color: #7ba3a0; margin-top: 12px; }
-
 .sidebar-bottom { margin-top: auto; padding-bottom: 8px; }
 .sidebar-status {
   display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left;
@@ -576,4 +567,36 @@ input, select { color: var(--text); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+
+/* ── Source links ────────────────────────────────────────── */
+.source-link {
+  display: inline-flex; align-items: center; gap: 5px; text-decoration: none;
+  color: var(--text-2); border: 1px solid var(--border-strong); background: transparent;
+}
+.source-link:hover { color: var(--text); border-color: var(--text-3); }
+.source-list { list-style: none; display: grid; gap: 7px; margin: 8px 0 4px; }
+.source-list a {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+  border: 1px solid var(--border); border-radius: 8px; text-decoration: none;
+  color: var(--text-2); font-size: 12px;
+}
+.source-list a:hover { border-color: var(--text-3); color: var(--text); }
+.source-host { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 11px; color: var(--text-3); }
+.source-list svg { margin-left: auto; color: var(--text-3); }
+
+/* ── Completeness grid ───────────────────────────────────── */
+.completeness-grid {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px;
+  padding: 4px 21px 20px;
+}
+.completeness-item {
+  border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+  background: var(--surface-2);
+}
+.completeness-item strong { display: block; font-size: 22px; font-weight: 650; letter-spacing: -.02em; }
+.completeness-item span { display: block; font-size: 12px; color: var(--text-2); margin-top: 3px; }
+.completeness-item small { display: block; font-size: 11px; color: var(--text-3); margin-top: 2px; }
+@media (max-width: 900px) {
+  .completeness-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

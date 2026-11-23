@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS gold.fact_job_platform_daily (
     last_observed_at            TIMESTAMPTZ NOT NULL,
     freshness_days              SMALLINT NOT NULL,
     evidence_window_days        SMALLINT NOT NULL,
+    source_url                  TEXT,
     snapshot_cutoff_at          TIMESTAMPTZ NOT NULL,
     silver_release_id           TEXT NOT NULL,
     loaded_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -155,6 +156,8 @@ CREATE TABLE IF NOT EXISTS gold.fact_job_platform_daily (
     FOREIGN KEY (gold_release_id, snapshot_date, unified_job_id)
         REFERENCES gold.fact_job_daily_snapshot(gold_release_id, snapshot_date, unified_job_id)
 );
+-- Existing deployments predate the column: a plain ADD COLUMN keeps the DDL idempotent.
+ALTER TABLE gold.fact_job_platform_daily ADD COLUMN IF NOT EXISTS source_url TEXT;
 CREATE INDEX IF NOT EXISTS idx_platform_daily_platform ON gold.fact_job_platform_daily(platform_key, snapshot_date);
 
 CREATE TABLE IF NOT EXISTS gold.fact_job_skill_daily (
