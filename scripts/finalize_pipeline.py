@@ -25,7 +25,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOG = PROJECT_ROOT / "data/operational/logs/final_pipeline.log"
 PY = str(PROJECT_ROOT / "lakehouse_env/bin/python")
-GOLD_RELEASE = f"gold_{datetime.now().strftime('%Y%m%d')}_final"
+GOLD_RELEASE = f"gold_{datetime.now().strftime('%Y%m%d_%H%M')}_final"
 
 
 def log(message: str) -> None:
