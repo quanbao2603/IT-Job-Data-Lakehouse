@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import random
 import sys
@@ -39,6 +40,27 @@ STATE_DB = PROJECT_ROOT / "data/state_store.db"
 OPERATIONAL = PROJECT_ROOT / "data/operational"
 RECORDS_PATH = OPERATIONAL / "topcv_backfill_records.jsonl"
 CHECKPOINT_PATH = OPERATIONAL / "topcv_backfill_checkpoint.json"
+
+# A deleted listing answers with TopCV's generic search page. A page that still shows
+# the job title but has no company block is an un-hydrated template, which can be live,
+# so it must be retried and never recorded as gone.
+GENERIC_TITLE_MARKER = "Tuyển dụng, tìm việc làm 24h"
+
+
+def _page_title(html: str) -> str:
+    match = re.search(r"<title>(.*?)</title>", html, re.S | re.I)
+    return match.group(1).strip() if match else ""
+
+
+def classify(html: str) -> str:
+    """'live' (company block present), 'deleted' (generic page) or 'template'."""
+    if "company-name-label" in html:
+        return "live"
+    if GENERIC_TITLE_MARKER.casefold() in _page_title(html).casefold():
+        return "deleted"
+    return "template"
+
+
 
 BLANK_COMPANY = {"", "UNKNOWN", "N/A", "CHƯA XÁC ĐỊNH"}
 
@@ -193,6 +215,13 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(300 if rate_limited else 600)
             continue
         blocked = 0
+        kind = classify(html or "")
+        if kind == "deleted":
+            gone.add(url)
+            checkpoint["gone"] = sorted(gone)
+            save_checkpoint(checkpoint)
+            print(f"[{index}/{len(urls)}] deleted on source: {url}", flush=True)
+            continue
         if not html:
             # _make_request returns None only for 404/410, i.e. TopCV deleted the ad.
             # Recording it keeps dead links out of every later pass.
@@ -204,12 +233,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             item = crawler._parse_job_detail_raw(html, url)
         except Exception as exc:  # noqa: BLE001
-            # "template chưa render" on this source means the listing is gone, not that
-            # the parser is broken: record it and move on instead of retrying forever.
-            gone.add(url)
-            checkpoint["gone"] = sorted(gone)
-            save_checkpoint(checkpoint)
-            print(f"[{index}/{len(urls)}] gone: {url}", flush=True)
+            # An un-hydrated template may still be a live ad, so it is NOT recorded as
+            # gone: the URL stays in 'remaining' and a later pass retries it.
+            print(f"[{index}/{len(urls)}] template not ready: {str(exc)[:80]} | {url}", flush=True)
             continue
         if not item.get("company_name"):
             print(f"[{index}/{len(urls)}] no company parsed: {url}", flush=True)
