@@ -197,24 +197,17 @@ def main(argv: list[str] | None = None) -> int:
 
     crawler = TopCVCrawler()
     collected = 0
-    blocked = 0
 
     for index, url in enumerate(urls, 1):
         try:
             html = crawler._make_request(url)
         except Exception as exc:  # noqa: BLE001
             message = str(exc)
-            rate_limited = "429" in message or "failed after" in message
-            blocked += 1
-            print(f"[{index}/{len(urls)}] block #{blocked}: {type(exc).__name__}: {message[:110]}", flush=True)
-            if blocked >= 2:
-                print("two consecutive blocks; stopping (checkpoint kept)", flush=True)
-                break
-            # Rate limiting costs nothing but time: the URL is still 'remaining', so it
-            # is retried in the next pass. A 403 means the breaker is already armed.
-            time.sleep(300 if rate_limited else 600)
-            continue
-        blocked = 0
+            # A 429 means the whole IP is throttled: retrying further URLs in the same
+            # pass only burns the budget, so the pass ends and the wrapper pauses.
+            # Nothing is lost — this URL stays in 'remaining' for the next pass.
+            print(f"[{index}/{len(urls)}] stopping pass: {type(exc).__name__}: {message[:110]}", flush=True)
+            break
         kind = classify(html or "")
         if kind == "deleted":
             gone.add(url)
