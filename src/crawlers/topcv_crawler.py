@@ -239,39 +239,105 @@ class TopCVCrawler(BaseCrawler):
             return id_m.group(1) if id_m else slug
         return url.split('/')[-1]
 
+    @staticmethod
+    def _clean(value: str) -> str:
+        """Collapse whitespace and drop unrendered template fragments."""
+        text = re.sub(r"\s+", " ", value or "").strip()
+        return "" if any(marker in text for marker in ("{{", "}}", "${")) else text
+
+    def _extract_company_name(self, soup) -> str:
+        """Company name lives in `.box-company-info-detail .company-name-label a.name`.
+
+        The old selector (`div.company-name`) matched the Angular template node first, so
+        every TopCV record stored `{{ company?.name }}` even on fully rendered pages.
+        """
+        candidates = []
+        node = (
+            soup.select_one(".box-company-info-detail .company-name-label a.name")
+            or soup.select_one(".company-name-label a.name")
+            or soup.select_one(".company-name-label a")
+        )
+        if node:
+            candidates.append(node.get_text(" ", strip=True))
+            candidates.append(node.get("title") or "")
+        logo = soup.select_one("a.company-logo")
+        if logo:
+            candidates.append(logo.get("title") or "")
+            image = logo.select_one("img")
+            if image:
+                candidates.append(image.get("alt") or "")
+        for candidate in candidates:
+            text = self._clean(candidate)
+            if text:
+                return text
+        return ""
+
+    def _label_values(self, soup, root: str = "") -> Dict[str, str]:
+        """Collect `label: value` pairs from the job and company info blocks."""
+        containers = (
+            (
+                ".job-detail__info--section-content",
+                ".job-detail__info--section-content-title",
+                ".job-detail__info--section-content-value",
+            ),
+            (
+                ".box-company-info-detail__list--item",
+                ".box-company-info-detail__list--item-label",
+                ".box-company-info-detail__list--item-value",
+            ),
+            (".general-item", ".title", ".value"),
+            (".box-item", ".title", ".value"),
+        )
+        values: Dict[str, str] = {}
+        for container, label_selector, value_selector in containers:
+            scope = soup.select_one(root) if root else soup
+            if scope is None:
+                return {}
+            for item in scope.select(container):
+                label = item.select_one(label_selector)
+                value = item.select_one(value_selector)
+                if not label or not value:
+                    continue
+                key = label.get_text(" ", strip=True).rstrip(":").strip().lower()
+                text = self._clean(value.get_text(" ", strip=True))
+                if key and text and key not in values:
+                    values[key] = text
+        return values
+
+    @staticmethod
+    def _first(values: Dict[str, str], *keys: str) -> str:
+        for key in keys:
+            if values.get(key):
+                return values[key]
+        return ""
+
     def _parse_job_detail_raw(self, html_content: str, job_url: str) -> Dict[str, Any]:
         soup = BeautifulSoup(html_content, 'html.parser')
 
         title_elem = soup.find('h1', class_=re.compile(r'job-title|title', re.I)) or soup.find('h1')
         job_title = title_elem.get_text(strip=True) if title_elem else ""
 
-        company_elem = soup.find('div', class_=re.compile(r'company-name', re.I)) or soup.find('a', class_=re.compile(r'company-name', re.I))
-        company_name = company_elem.get_text(strip=True) if company_elem else ""
+        company_name = self._extract_company_name(soup)
 
         salary_elem = soup.find(class_=re.compile(r'salary|salary-range', re.I))
         salary = salary_elem.get_text(strip=True) if salary_elem else "Thỏa thuận"
+        # A rendered page appends a lookup widget to the salary text.
+        salary = re.split(r'Tra cứu lương', salary)[0].strip() or "Thỏa thuận"
 
-        general_items = {}
-        for box in soup.find_all('div', class_=re.compile(r'general-item|box-item|item', re.I)):
-            label = box.find(class_=re.compile(r'title|label', re.I))
-            val = box.find(class_=re.compile(r'value|text', re.I))
-            if label and val:
-                general_items[label.get_text(strip=True).lower()] = val.get_text(strip=True)
-
-        job_location = general_items.get('địa điểm tuyển dụng', general_items.get('địa điểm', ''))
-        experience = general_items.get('kinh nghiệm', '')
-        deadline = general_items.get('hạn nộp hồ sơ', general_items.get('hạn nộp', ''))
-        job_level = general_items.get('cấp bậc', '')
-        education = general_items.get('bằng cấp', '')
-        quantity = general_items.get('số lượng tuyển', '')
-        work_mode = general_items.get('hình thức làm việc', '')
-        contract_type = general_items.get('loại hợp đồng', '')
+        general_items = self._label_values(soup)
+        job_location = self._first(general_items, 'địa điểm tuyển dụng', 'địa điểm làm việc', 'địa điểm', 'nơi làm việc')
+        experience = self._first(general_items, 'kinh nghiệm', 'kinh nghiệm làm việc')
+        deadline = self._first(general_items, 'hạn nộp hồ sơ', 'hạn nộp')
+        job_level = self._first(general_items, 'cấp bậc', 'chức vụ')
+        education = self._first(general_items, 'bằng cấp', 'học vấn')
+        quantity = self._first(general_items, 'số lượng tuyển', 'số lượng')
+        work_mode = self._first(general_items, 'hình thức làm việc', 'hình thức')
+        contract_type = self._first(general_items, 'loại hợp đồng')
 
         # TopCV serves an Angular shell until the client hydrates it. When the page is
-        # captured pre-render every selector resolves to the raw template, which used to
-        # be ingested as company_name "{{ company?.name }}" with an empty location/level.
+        # captured pre-render there is no company name and no location/level at all.
         # Fail closed instead: a skipped page surfaces as PARSER_FAILURE, not as data.
-        if "{{" in company_name and not any(
+        if not company_name and not any(
             value.strip() for value in (job_location, experience, job_level, education, contract_type)
         ):
             raise ValueError("TopCV trả về trang template chưa render (company/location/level rỗng)")
@@ -324,19 +390,10 @@ class TopCVCrawler(BaseCrawler):
         if time_sec:
             work_time = time_sec.get_text(strip=True)
 
-        company_size = ""
-        company_address = ""
-        company_industry = ""
-        comp_info = soup.find('div', class_=re.compile(r'company-info|company-detail', re.I))
-        if comp_info:
-            for item in comp_info.find_all(class_=re.compile(r'item|line', re.I)):
-                t = item.get_text(strip=True)
-                if 'quy mô' in t.lower():
-                    company_size = t.split(':')[-1].strip()
-                elif 'địa điểm' in t.lower() or 'địa chỉ' in t.lower():
-                    company_address = t.split(':')[-1].strip()
-                elif 'lĩnh vực' in t.lower() or 'ngành nghề' in t.lower():
-                    company_industry = t.split(':')[-1].strip()
+        company_items = self._label_values(soup, root=".box-company-info-detail")
+        company_size = self._first(company_items, 'quy mô', 'quy mô công ty')
+        company_address = self._first(company_items, 'địa chỉ', 'địa điểm')
+        company_industry = self._first(company_items, 'ngành nghề', 'lĩnh vực')
 
         content_for_hash = f"{job_title}|{company_name}|{salary}|{job_description[:200]}"
         content_hash = hashlib.sha256(content_for_hash.encode('utf-8')).hexdigest()

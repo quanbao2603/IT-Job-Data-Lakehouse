@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -73,6 +74,20 @@ class TestFailClosedCrawlers(unittest.TestCase):
         """
         with self.assertRaisesRegex(ValueError, "template"):
             crawler._parse_job_detail_raw(html, "https://www.topcv.vn/viec-lam/x/1.html")
+
+    def test_topcv_company_block_is_parsed_from_the_rendered_page(self):
+        crawler = TopCVCrawler.__new__(TopCVCrawler)
+        crawler.source_name = "topcv"
+        html = (Path(__file__).parent / "fixtures" / "topcv_job_detail.html").read_text(encoding="utf-8")
+        item = crawler._parse_job_detail_raw(html, "https://www.topcv.vn/viec-lam/software-support-specialist/2335659.html")
+        self.assertEqual(item["company_name"], "CÔNG TY CỔ PHẦN DƯỢC PHẨM FPT LONG CHÂU")
+        self.assertIn("10000", item["company_size"])
+        self.assertIn("Hai Bà Trưng", item["company_address"])
+        self.assertIn("Bán lẻ thuốc", item["company_industry"])
+        self.assertEqual(item["job_location"], "Hồ Chí Minh")
+        self.assertEqual(item["job_level"], "Nhân viên")
+        self.assertEqual(item["experience"], "2 năm")
+        self.assertEqual(item["salary"], "12 - 16 triệu")
 
     def test_vieclam24h_listing_failure_is_not_empty_success(self):
         crawler = Vieclam24hCrawler.__new__(Vieclam24hCrawler)
