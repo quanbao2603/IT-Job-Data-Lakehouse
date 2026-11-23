@@ -57,3 +57,25 @@ traffic and while leaving headroom for Airflow/PostgreSQL.
 6. Optional: web access protection (Basic Auth account prepared by the operator).
 7. Rollback rehearsal: repoint `current`, restart only the web service, restore the Nginx
    snippet — service restart already exercised; Nginx rollback is a single `cp` + reload.
+
+## Giao diện — đợt chỉnh sửa 23/11/2026
+
+| Yêu cầu | Trạng thái | Bằng chứng |
+|---|---|---|
+| `Snapshot` → `cập nhật ngày` ở mọi tab và sidebar | Đạt | ảnh `?page=overview`, `?page=jobs`, `?page=skills`, `?page=quality` |
+| Ngày lấy từ dữ liệu, không hard-code | Đạt | `formatDay(meta.snapshot_date)`; DOM test so với `/api/dashboard` |
+| Bỏ dòng `Release gold_… cutoff …` | Đạt | đã xoá `ReleaseNote` khỏi Tổng quan, Tin tuyển dụng, Kỹ năng |
+| Bỏ đoạn định nghĩa lương ở Tổng quan | Đạt | không còn `.definition` |
+| `Nền tảng có bằng chứng gần đây` → `nền tảng` | Đạt | tiêu đề biểu đồ |
+| `Quan sát gần nhất` → `cập nhật gần nhất` | Đạt | thẻ tin và modal |
+| Sidebar: bỏ khối "Dữ liệu có nguồn gốc" | Đạt | CSS `.sidebar-note` đã xoá, không còn khoảng trống |
+| `Trong ngưỡng mới` → `cập nhật mới` | Đạt | trạng thái sidebar |
+| Mỗi tin có liên kết "Xem tin gốc" | Đạt | 750/750 tin lấy mẫu có `source_url`; DOM test `links every job card` |
+| Tin thiếu URL ghi rõ trạng thái | Đạt | "Chưa có liên kết nguồn", không render link rỗng |
+| Tin nhiều nguồn xem được từng nguồn | Đạt | modal liệt kê `source_urls[]` theo nền tảng |
+| Tên kỹ năng đúng chuẩn viết | Đạt | SQL, AWS, JavaScript, PostgreSQL |
+| "0 kỹ năng" → "Chưa ghi nhận kỹ năng" | Đạt | thẻ tin |
+| Tách "Đạt quy tắc" khỏi "Mức độ đầy đủ" | Đạt | panel completeness: lương 34%, địa điểm 87,4%, cấp bậc 80%, chuyên môn 81,4% |
+
+Kiểm chứng tự động: 323 test root, 30 test API, 5 test DOM live, 19/19 `verify_live.py`,
+`npm run typecheck`/`build` sạch.
