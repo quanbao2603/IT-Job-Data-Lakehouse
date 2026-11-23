@@ -181,16 +181,25 @@ def main(argv: list[str] | None = None) -> int:
         try:
             html = crawler._make_request(url)
         except Exception as exc:  # noqa: BLE001
+            message = str(exc)
+            rate_limited = "429" in message or "failed after" in message
             blocked += 1
-            print(f"[{index}/{len(urls)}] block #{blocked}: {type(exc).__name__}: {str(exc)[:110]}", flush=True)
+            print(f"[{index}/{len(urls)}] block #{blocked}: {type(exc).__name__}: {message[:110]}", flush=True)
             if blocked >= 2:
                 print("two consecutive blocks; stopping (checkpoint kept)", flush=True)
                 break
-            time.sleep(600)
+            # Rate limiting costs nothing but time: the URL is still 'remaining', so it
+            # is retried in the next pass. A 403 means the breaker is already armed.
+            time.sleep(300 if rate_limited else 600)
             continue
         blocked = 0
         if not html:
-            print(f"[{index}/{len(urls)}] skip (no html): {url}", flush=True)
+            # _make_request returns None only for 404/410, i.e. TopCV deleted the ad.
+            # Recording it keeps dead links out of every later pass.
+            gone.add(url)
+            checkpoint["gone"] = sorted(gone)
+            save_checkpoint(checkpoint)
+            print(f"[{index}/{len(urls)}] deleted on source: {url}", flush=True)
             continue
         try:
             item = crawler._parse_job_detail_raw(html, url)
