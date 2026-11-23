@@ -32,10 +32,14 @@ class TopCVCrawler(BaseCrawler):
     SEARCH_BASE = "https://www.topcv.vn/tim-viec-lam-it?page={page}"
     REQUEST_DELAY_MIN = 1.0
     REQUEST_DELAY_MAX = 1.8
-    REQUESTS_BEFORE_COOLDOWN_MIN = 1
-    REQUESTS_BEFORE_COOLDOWN_MAX = 2
-    COOLDOWN_MIN = 30.0
-    COOLDOWN_MAX = 60.0
+    # curl_cffi impersonates a real Chrome TLS fingerprint, so Cloudflare no longer
+    # answers 403 for every request. The old 1-2 request burst made a 1.100 job
+    # backfill take ~15 hours; 20-30 requests with a short pause stays polite while
+    # finishing in under an hour. A real 403 still trips the 15 minute breaker.
+    REQUESTS_BEFORE_COOLDOWN_MIN = 20
+    REQUESTS_BEFORE_COOLDOWN_MAX = 30
+    COOLDOWN_MIN = 15.0
+    COOLDOWN_MAX = 25.0
     BLOCKED_COOLDOWN_SECONDS = 15 * 60
 
     def __init__(self, **kwargs):
