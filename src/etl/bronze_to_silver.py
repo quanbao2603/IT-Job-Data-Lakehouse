@@ -505,8 +505,13 @@ class BronzeToSilverPipeline:
                     entity["canonical_title"] = canonical.get("job_title") or entity.get("canonical_title")
                     entity["canonical_company"] = canonical.get("company_name") or entity.get("canonical_company")
                     entity["canonical_location"] = canonical.get("city_normalized") or entity.get("canonical_location")
-                    entity["canonical_salary_min_vnd"] = canonical.get("salary_min_vnd")
-                    entity["canonical_salary_max_vnd"] = canonical.get("salary_max_vnd")
+                    # Salary is sparse: only replace a known value with another known
+                    # value, otherwise the entity loses salary while the registry keeps
+                    # it and Gold reports SOURCE_DIVERGENCE.
+                    if canonical.get("salary_min_vnd") is not None:
+                        entity["canonical_salary_min_vnd"] = canonical["salary_min_vnd"]
+                    if canonical.get("salary_max_vnd") is not None:
+                        entity["canonical_salary_max_vnd"] = canonical["salary_max_vnd"]
                     entity["canonical_job_level"] = canonical.get("job_level") or entity.get("canonical_job_level")
                     entity["canonical_work_mode"] = canonical.get("work_mode") or entity.get("canonical_work_mode")
                     refresh = getattr(self.registry, "refresh_entity_canonical", None)

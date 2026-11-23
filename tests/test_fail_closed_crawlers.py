@@ -135,10 +135,12 @@ class TestFailClosedCrawlers(unittest.TestCase):
             "src.crawlers.topcv_crawler.HAVE_CURL_CFFI", True
         ):
             session_factory.return_value.headers = {}
-            session_factory.return_value.cookies.update = lambda *_args, **_kwargs: None
             crawler.cookie = ""
             crawler._create_session()
-        session_factory.assert_called_once_with(impersonate="chrome120")
+        # chrome120 (plus an explicit UA) was answered with 403 by Cloudflare; the
+        # newest profile without extra headers returns 200 with the same cookie.
+        session_factory.assert_called_once_with(impersonate="chrome")
+        self.assertNotIn("User-Agent", session_factory.return_value.headers)
 
     def test_topcv_cools_down_before_next_burst(self):
         crawler = TopCVCrawler.__new__(TopCVCrawler)

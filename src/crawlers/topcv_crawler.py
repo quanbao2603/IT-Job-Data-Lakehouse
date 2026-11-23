@@ -33,15 +33,15 @@ class TopCVCrawler(BaseCrawler):
     # Tunable without editing code: TopCV starts returning HTTP 429 when the crawl
     # exceeds roughly 15-20 requests/minute from one IP.
     REQUEST_DELAY_MIN = float(os.getenv("TOPCV_DELAY_MIN", "2.0"))
-    REQUEST_DELAY_MAX = float(os.getenv("TOPCV_DELAY_MAX", "3.0"))
+    REQUEST_DELAY_MAX = float(os.getenv("TOPCV_DELAY_MAX", "2.2"))
     # curl_cffi impersonates a real Chrome TLS fingerprint, so Cloudflare no longer
     # answers 403 for every request. A faster burst (20-30) drew HTTP 429 from TopCV,
     # so the crawl runs at ~20 requests/minute: 10-15 requests, then a 20-30s pause,
     # plus a 2-3s delay per request. A real 403 still trips the 15 minute breaker.
-    REQUESTS_BEFORE_COOLDOWN_MIN = int(os.getenv("TOPCV_BURST_MIN", "10"))
-    REQUESTS_BEFORE_COOLDOWN_MAX = int(os.getenv("TOPCV_BURST_MAX", "15"))
-    COOLDOWN_MIN = float(os.getenv("TOPCV_COOLDOWN_MIN", "20"))
-    COOLDOWN_MAX = float(os.getenv("TOPCV_COOLDOWN_MAX", "30"))
+    REQUESTS_BEFORE_COOLDOWN_MIN = int(os.getenv("TOPCV_BURST_MIN", "8"))
+    REQUESTS_BEFORE_COOLDOWN_MAX = int(os.getenv("TOPCV_BURST_MAX", "10"))
+    COOLDOWN_MIN = float(os.getenv("TOPCV_COOLDOWN_MIN", "15"))
+    COOLDOWN_MAX = float(os.getenv("TOPCV_COOLDOWN_MAX", "20"))
     BLOCKED_COOLDOWN_SECONDS = 15 * 60
 
     def __init__(self, **kwargs):
@@ -157,26 +157,27 @@ class TopCVCrawler(BaseCrawler):
         return ""
 
     def _create_session(self):
+        """curl_cffi owns the whole browser profile.
+
+        Adding even "harmless" headers (Referer/Accept-Language) on top of the
+        impersonated profile made Cloudflare answer 403 with a cookie that otherwise
+        returns 200, so the session is left untouched apart from the cookie dict.
+        """
         if HAVE_CURL_CFFI:
-            s = requests.Session(impersonate="chrome120")
+            s = requests.Session(impersonate="chrome")
         else:
             s = requests.Session()
-
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'vi,en-US;q=0.9,en;q=0.8',
-            'Referer': 'https://www.topcv.vn/',
-        }
-        s.headers.update(headers)
-
+            s.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
+            })
+        self._cookies = {}
         if self.cookie:
-            cookies_dict = {}
             for item in self.cookie.split(";"):
                 if "=" in item:
                     k, v = item.strip().split("=", 1)
-                    cookies_dict[k] = v
-            s.cookies.update(cookies_dict)
+                    self._cookies[k] = v
         return s
 
     def _make_request(self, url: str, max_retries: int = 4, base_backoff: float = 3.0) -> Optional[str]:
@@ -194,7 +195,7 @@ class TopCVCrawler(BaseCrawler):
                     time.sleep(pause)
                     self._requests_since_cooldown = 0
                     self._next_cooldown_after = self._choose_next_cooldown()
-                resp = self.session.get(url, timeout=20)
+                resp = self.session.get(url, timeout=20, cookies=getattr(self, "_cookies", None) or None)
 
                 if resp.status_code == 200:
                     self._requests_since_cooldown = getattr(self, "_requests_since_cooldown", 0) + 1
