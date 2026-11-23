@@ -62,6 +62,8 @@ class CareerVietCrawler(BaseCrawler):
     def _load_cookie(self) -> str:
         candidates = [
             os.path.join(os.path.dirname(__file__), "cookies", "careerviet_cookie.txt"),
+            # the exported file was historically named careervietnam_cookie.txt
+            os.path.join(os.path.dirname(__file__), "cookies", "careervietnam_cookie.txt"),
             os.path.join(os.path.dirname(__file__), "careerviet", "careerviet_cookie.txt"),
         ]
         for c_path in candidates:
