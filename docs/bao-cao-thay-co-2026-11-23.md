@@ -126,7 +126,7 @@ Xử lý ở ba lớp:
 
 - **Địa điểm:** đọc thêm `job_locations` (VietnamWorks) và `company_location`; pattern
   thành phố có thứ tự ưu tiên (HCM, Hà Nội, Đà Nẵng, Hải Phòng, Cần Thơ…). Tỷ lệ chưa
-  xác định giảm từ 33% → 13,8%.
+  xác định giảm từ 33% → 12,6%.
 - **Cấp bậc:** suy từ nhãn gốc của nền tảng, từ title, và từ số tháng kinh nghiệm.
   Sửa lỗi `monthsOfExperience` dạng dict của ITviec bị đọc thành "năm" khiến ~1.200 kỹ
   sư bị xếp nhầm Lead. Tỷ lệ chưa xác định 30% → 20%.
@@ -147,27 +147,27 @@ hệ thống không âm thầm publish dữ liệu sai.
 
 ## 5. Kết quả dữ liệu hiện tại
 
-**Release:** `gold_20261123_listing_fix` · snapshot 23/11/2026 · **33/33 kiểm tra đạt**
+**Release:** `gold_20261123_final` · snapshot 23/11/2026 · **33/33 kiểm tra đạt**
 
 | Chỉ số | Giá trị |
 |---|---|
-| Tin tuyển dụng (entity) | **4.444** |
-| Công ty | 1.853 |
-| Mẫu lương hợp lệ | 1.509 |
+| Tin tuyển dụng (entity) | **4.446** |
+| Công ty | 1.874 |
+| Mẫu lương hợp lệ | 1.511 |
 | Trung vị lương | 20 triệu VND |
 | Kỹ năng trích được | 129 |
-| Observation (quan sát) | 8.244 |
+| Observation (quan sát) | 8.269 |
 | Nền tảng | 9 |
 
 ### Phân bố theo chuyên môn
 
 | Nhóm | Số tin | Tỷ lệ |
 |---|---|---|
-| Phát triển phần mềm | 1.417 | 31,9% |
-| Dữ liệu & AI | 712 | 16,0% |
-| Chưa xác định | 834 | 18,8% |
-| Phân tích & Quản lý | 406 | 9,1% |
-| Hạ tầng & Cloud | 371 | 8,3% |
+| Phát triển phần mềm | 1.424 | 32,0% |
+| Dữ liệu & AI | 715 | 16,1% |
+| Chưa xác định | 826 | 18,6% |
+| Phân tích & Quản lý | 403 | 9,1% |
+| Hạ tầng & Cloud | 374 | 8,4% |
 | QA & Kiểm thử | 282 | 6,3% |
 | An ninh mạng | 252 | 5,7% |
 | Di động & Nhúng | 170 | 3,8% |
@@ -176,10 +176,10 @@ hệ thống không âm thầm publish dữ liệu sai.
 
 | Địa điểm | Số tin | | Cấp bậc | Số tin |
 |---|---|---|---|---|
-| Hà Nội | 1.778 (40,0%) | | Mid | 1.471 (33,1%) |
-| Hồ Chí Minh | 1.663 (37,4%) | | Chưa xác định | 889 (20,0%) |
-| Chưa xác định | 615 (13,8%) | | Junior | 635 (14,3%) |
-| Khác | 364 (8,2%) | | Lead | 528 (11,9%) |
+| Hà Nội | 1.821 (41,0%) | | Mid | 1.471 (33,1%) |
+| Hồ Chí Minh | 1.672 (37,6%) | | Chưa xác định | 889 (20,0%) |
+| Chưa xác định | 562 (12,6%) | | Junior | 635 (14,3%) |
+| Khác | 367 (8,3%) | | Lead | 528 (11,9%) |
 | Đà Nẵng | 24 (0,5%) | | Senior | 495 (11,1%) |
 
 ### Top công ty tuyển dụng
@@ -207,6 +207,7 @@ Linux (205) · AWS (196) · Java (196) · Scrum (189) · Azure (180)
 | Smoke test bundle trong venv sạch | PASS (cài từ `requirements.lock.txt`) |
 | Kiểm tra HEAD/GET, 404 docs | Đúng |
 | Trang công khai | 200 từ DE/UA/US |
+| Release cuối | `gold_20261123_final` — 33/33 DQ, dashboard xác nhận đúng release |
 
 Mọi con số trên dashboard đều đối soát được: `verify_live.py` gọi API và so trực tiếp
 với PostgreSQL Gold, không so với snapshot cứng.
@@ -215,9 +216,10 @@ với PostgreSQL Gold, không so với snapshot cứng.
 
 ## 7. Hạn chế đã biết (báo cáo trung thực)
 
-1. **606 tin TopCV cũ** (chỉ xuất hiện trong dữ liệu 07/11) có observation lưu
-   placeholder. Đang được backfill chậm từ trang chi tiết (6–9s/tin, có checkpoint).
-   Đây là dữ liệu lịch sử; phần lớn tin đã hết hạn.
+1. **519 tin TopCV cũ** (quan sát ngày 07/11, phần lớn đã hết hạn) vẫn thiếu entity
+   công ty. Đã backfill được 56 tin từ trang chi tiết rồi bị TopCV chặn (HTTP 403 +
+   circuit breaker). Checkpoint được giữ lại nên có thể chạy tiếp bất cứ lúc nào bằng
+   `scripts/topcv_detail_backfill.py --only-missing`.
 2. **DevWork không có entity công ty** — giới hạn của nguồn, chấp nhận nhãn "chưa xác
    định" và ghi rõ trong báo cáo (~41 tin).
 3. **Vieclam24h** chặn truy cập (403) ở lần cào gần nhất; dữ liệu cũ vẫn còn trong
@@ -247,7 +249,7 @@ với PostgreSQL Gold, không so với snapshot cứng.
 
 ## 9. Hướng phát triển
 
-1. Hoàn tất backfill 606 tin TopCV cũ và chạy lại Silver/Gold.
+1. Chạy tiếp backfill 519 tin TopCV cũ (checkpoint sẵn sàng) và publish lại Gold.
 2. Bật cảnh báo vận hành (Telegram/webhook) khi DAG fail hoặc release quá cũ.
 3. Đưa review queue vào vận hành thật (người duyệt ACCEPT/REJECT).
 4. Bổ sung nguồn mới (LinkedIn VN, JobStreet) nếu được phép.
