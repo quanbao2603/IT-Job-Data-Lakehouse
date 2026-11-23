@@ -281,6 +281,10 @@ def generate_unified_job_id(identity_seed: str) -> str:
 
 def parse_salary(value: Any, usd_to_vnd: int = 25_400) -> tuple[Optional[int], Optional[int], bool, Optional[str]]:
     raw = normalize_text(value)
+    # Sources append a salary-lookup widget to the real text
+    # ("25 - 33 triệuXem mức lương thị trường cho vị trí này").
+    for marker in ("tra cứu lương", "xem mức lương", "xem chi tiết"):
+        raw = raw.split(marker)[0].strip()
     if not raw or any(word in raw for word in ("thỏa thuận", "thoả thuận", "negotiable", "competitive")):
         return None, None, bool(raw), None
     currency = "USD" if "$" in raw or "usd" in raw else "VND"

@@ -7,6 +7,7 @@ from src.etl.transformers import (
     canonicalize_bronze_record,
     is_placeholder_company,
     normalize_city,
+    parse_salary,
 )
 from src.storage.metadata_envelope import MetadataEnvelope
 
@@ -114,6 +115,18 @@ class TestVietnamWorksFields(unittest.TestCase):
             _envelope("vietnamworks", "78", job_level="Experienced (non-manager)", years_of_experience=3)
         )
         self.assertEqual(record["job_level"], "Mid")
+
+
+class TestSalaryText(unittest.TestCase):
+    def test_lookup_widget_suffix_is_ignored(self):
+        low, high, negotiable, currency = parse_salary("25 - 33 triệuXem mức lương thị trường cho vị trí này")
+        self.assertEqual((low, high), (25_000_000, 33_000_000))
+        self.assertFalse(negotiable)
+        self.assertEqual(currency, "VND")
+
+    def test_tra_cuu_suffix_is_ignored(self):
+        low, high, _, _ = parse_salary("12 - 16 triệuTra cứu lương thị trường việc làm")
+        self.assertEqual((low, high), (12_000_000, 16_000_000))
 
 
 if __name__ == "__main__":

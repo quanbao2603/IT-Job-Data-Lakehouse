@@ -326,7 +326,7 @@ class TopCVCrawler(BaseCrawler):
         salary_elem = soup.find(class_=re.compile(r'salary|salary-range', re.I))
         salary = salary_elem.get_text(strip=True) if salary_elem else "Thỏa thuận"
         # A rendered page appends a lookup widget to the salary text.
-        salary = re.split(r'Tra cứu lương', salary)[0].strip() or "Thỏa thuận"
+        salary = re.split(r'Tra cứu lương|Xem mức lương', salary)[0].strip() or "Thỏa thuận"
 
         general_items = self._label_values(soup)
         job_location = self._first(general_items, 'địa điểm tuyển dụng', 'địa điểm làm việc', 'địa điểm', 'nơi làm việc')
