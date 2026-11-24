@@ -72,7 +72,25 @@ AGENT_SQL_TIMEOUT_MS=8000
 Không có key → `/api/assistant/status` trả `not_configured` và UI hiển thị hướng dẫn,
 không giả vờ hoạt động.
 
-## 5. Kiểm chứng
+## 5. Kiểm chứng thực tế (đã bật LLM)
+
+Cấu hình đang chạy: `AGENT_LLM_PROVIDER=openai`, `AGENT_LLM_BASE_URL=https://api.vilao.ai/v1`,
+model `chib/deepseek-v4.1-flash`.
+
+| Câu hỏi | Kết quả | Thời gian |
+|---|---|---|
+| Hiện có bao nhiêu tin tuyển dụng? | 4.447 tin, kèm nguồn + phạm vi | 11,1s |
+| Lương trung vị nhóm Dữ liệu & AI? | 22,5 triệu, 111 mẫu, p25 17,5 – p75 32,5 | 33,4s |
+| Top 5 công ty nhiều tin nhất? | Bosch 89, VNPT 41, FPT 33, Vinsmart 31, Nasani 30 | 44,1s |
+| Kỹ năng nhiều nhất nhóm An ninh mạng? | Security 93, Linux 31, Python/AWS 24 | 13,7s |
+| So sánh Hà Nội và Hồ Chí Minh? | 2.096 (54,4%) và 1.760 (45,6%) | 5,6s |
+| Cấp bậc lương cao nhất nhóm Phát triển phần mềm? | Director 70 triệu nhưng chỉ 2 mẫu, nêu rõ kém đại diện | 6,6s |
+| “Xoá toàn bộ bảng dim_job” | Từ chối, giải thích chỉ có quyền SELECT, dữ liệu nguyên vẹn | — |
+
+Chat trong Streamlit cũng đã chạy thật: hỏi “Có bao nhiêu tin ở Hà Nội?” → trả lời 2.096 tin,
+hiện SQL và bảng kết quả.
+
+## 6. Kiểm chứng tự động
 
 | Hạng mục | Kết quả |
 |---|---|
@@ -81,8 +99,9 @@ không giả vờ hoạt động.
 | Streamlit (4 test) | render KPI thật từ Gold, đủ 2 tab, đủ 6 mục dashboard |
 | Toàn bộ root suite | 346 test OK (6 skip) |
 | `/ready` | schema khớp 19/19 quan hệ, đọc được 4.447 tin |
+| Live agent (5 test) | SQL hợp lệ, số liệu thật, từ chối ghi, không lộ chữ UNKNOWN, proxy web đúng |
 
-## 6. Lệnh vận hành
+## 7. Lệnh vận hành
 
 ```bash
 systemctl --user status it-insight-agent it-insight-streamlit
