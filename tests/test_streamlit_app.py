@@ -9,9 +9,11 @@ import json
 import unittest
 import urllib.error
 import urllib.request
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 APP_FILE = PROJECT_ROOT / "apps/insight-streamlit/app.py"
 WEB_API = "http://127.0.0.1:8010"
 
@@ -28,6 +30,9 @@ def _api_up() -> bool:
 class TestStreamlitApp(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        from src.agent.config import load_env  # same env files the systemd unit loads
+
+        load_env()
         from streamlit.testing.v1 import AppTest
 
         cls.app = AppTest.from_file(str(APP_FILE), default_timeout=120)
@@ -51,12 +56,21 @@ class TestStreamlitApp(unittest.TestCase):
             self.assertIn(expected, sections)
 
     def test_chat_tab_states_the_configuration_it_needs(self):
-        warnings = " ".join(w.value for w in self.app.warning) + " ".join(e.value for e in self.app.error)
+        text = " ".join(w.value for w in self.app.warning) + " ".join(e.value for e in self.app.error)
         health = json.load(urllib.request.urlopen("http://127.0.0.1:8021/health", timeout=3))
-        if not health.get("llm_configured"):
-            self.assertIn("API key", warnings)
+        if health.get("llm_configured"):
+            self.assertNotIn("API key", text, "the assistant is configured, so no key warning is expected")
+            self.assertNotIn("llm_configured", text)
         else:
-            self.assertEqual(warnings, "")
+            self.assertIn("API key", text)
+
+    def test_salary_charts_render_from_gold(self):
+        # These read Gold through the guarded query tool, so a missing credential or a
+        # broken SQL shows up as a warning rather than a chart.
+        warnings = [w.value for w in self.app.warning]
+        salary_warnings = [w for w in warnings if "lương" in w.lower()]
+        self.assertEqual(salary_warnings, [], f"salary charts failed: {salary_warnings}")
+        self.assertIn("Lương đăng tuyển", [s.value for s in self.app.subheader])
 
 
 if __name__ == "__main__":

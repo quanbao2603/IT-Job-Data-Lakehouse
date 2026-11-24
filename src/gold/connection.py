@@ -33,13 +33,29 @@ def gold_dsn_parts() -> dict[str, str]:
 
 
 def connect(readonly: bool = False) -> Any:
-    """Open a Gold connection. readonly=True uses the BI role when configured."""
+    """Open a Gold connection. readonly=True uses the BI role when configured.
+
+    A read-only caller only needs the reader secret: requiring GOLD_DB_PASSWORD here used
+    to make every read-only service depend on the writer password, which it must not have.
+    """
     import psycopg2
 
-    parts = gold_dsn_parts()
     if readonly:
-        parts["user"] = os.getenv("GOLD_DB_READER_USER", "gold_reader")
-        parts["password"] = os.getenv("GOLD_DB_READER_PASSWORD", parts["password"])
+        load_env_file()
+        reader_password = os.getenv("GOLD_DB_READER_PASSWORD", "")
+        if not reader_password:
+            raise ValueError(
+                "GOLD_DB_READER_PASSWORD is not set; refusing to open a read-only connection"
+            )
+        parts = {
+            "host": os.getenv("GOLD_DB_HOST", DEFAULTS["host"]),
+            "port": os.getenv("GOLD_DB_PORT", DEFAULTS["port"]),
+            "dbname": os.getenv("GOLD_DB_NAME", DEFAULTS["dbname"]),
+            "user": os.getenv("GOLD_DB_READER_USER", "gold_reader"),
+            "password": reader_password,
+        }
+    else:
+        parts = gold_dsn_parts()
     return psycopg2.connect(
         host=parts["host"],
         port=parts["port"],
