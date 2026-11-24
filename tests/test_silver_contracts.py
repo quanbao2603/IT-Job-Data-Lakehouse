@@ -45,6 +45,22 @@ class TestSilverContracts(unittest.TestCase):
         self.assertEqual(parse_salary("2,000 - 3,000 USD"), (50800000, 76200000, False, "USD"))
         self.assertEqual(parse_salary("Thỏa thuận"), (None, None, True, None))
 
+    def test_salary_parser_reads_the_tr_unit_vietnamworks_uses(self):
+        """'12tr-15tr' means twelve million dong, not twelve dong."""
+        self.assertEqual(
+            parse_salary("12tr-15tr ₫/tháng"), (12_000_000, 15_000_000, False, "VND")
+        )
+        self.assertEqual(
+            parse_salary("Tới 5tr ₫/tháng"), (5_000_000, 5_000_000, False, "VND")
+        )
+        # A masked currency placeholder must not flip a triệu figure to USD.
+        self.assertEqual(
+            parse_salary("$$ 7tr-9tr /tháng"), (7_000_000, 9_000_000, False, "VND")
+        )
+        # Annual range is still converted to a monthly figure.
+        low, high, _, _ = parse_salary("300tr-400tr ₫/năm")
+        self.assertEqual((low, high), (25_000_000, 33_333_333))
+
     def test_transformer_applies_stable_observation_contract(self):
         envelope = {
             "_metadata": {"source": "itviec", "ingested_at": "2026-11-16T02:00:00Z"},

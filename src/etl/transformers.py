@@ -376,6 +376,15 @@ def parse_salary(value: Any, usd_to_vnd: int = 25_400) -> tuple[Optional[int], O
     multiplier = 1
     if "triệu" in raw or "trieu" in raw or "million" in raw:
         multiplier = 1_000_000
+    elif re.search(r"\d\s*tr\b", raw):
+        # VietnamWorks writes the unit as "tr" ("12tr-15tr ₫/tháng", "Tới 5tr").
+        # Without this branch 12 means twelve dong, which then poisons every median
+        # that includes the row.
+        multiplier = 1_000_000
+        if "usd" not in raw:
+            # The same source masks the currency as "$$ 7tr-9tr"; "tr" already means
+            # triệu đồng, so the placeholder must not switch the row to USD.
+            currency = "VND"
     elif re.search(r"\d\s*k\b", raw):
         multiplier = 1_000
     values = [int(n * multiplier * (usd_to_vnd if currency == "USD" else 1)) for n in numbers[:2]]
