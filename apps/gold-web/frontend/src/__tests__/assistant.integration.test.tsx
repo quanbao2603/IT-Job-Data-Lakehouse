@@ -30,12 +30,15 @@ describe.skipIf(!live)('assistant chat behaviour', () => {
     const answer = await waitFor(() => {
       const found = Array.from(document.querySelectorAll('.chat-bubble.assistant'))
         .map((node) => node.textContent ?? '')
-        .find((text) => text && !text.includes('Đang truy vấn'))
+        .find((text) => text && !/đang truy vấn/i.test(text))
       expect(found).toBeTruthy()
       return found as string
     }, { timeout: 90000 })
     expect(answer.length).toBeGreaterThan(10)
     expect(answer.toLowerCase()).toMatch(/chào|trợ lý|hỏi|số liệu/)
+    // The answer must never expose SQL or the storage layer it came from.
+    expect(answer.toLowerCase()).not.toContain('select ')
+    expect(answer.toLowerCase()).not.toContain('gold.v_')
   }, 120000)
 
   it('answers a clicked suggestion chip', async () => {
@@ -46,7 +49,7 @@ describe.skipIf(!live)('assistant chat behaviour', () => {
     const answer = await waitFor(() => {
       const found = Array.from(document.querySelectorAll('.chat-bubble.assistant'))
         .map((node) => node.textContent ?? '')
-        .find((text) => text && !text.includes('Đang truy vấn'))
+        .find((text) => text && !/đang truy vấn/i.test(text))
       expect(found).toBeTruthy()
       return found as string
     }, { timeout: 90000 })

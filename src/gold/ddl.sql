@@ -408,3 +408,19 @@ CREATE TABLE IF NOT EXISTS gold_staging.conflict_report (
     detected_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (gold_release_id, conflict_type, entity_or_observation_id)
 );
+
+-- Job ad text lives apart from the dimensions: the BI reads facets from dim_job, while the
+-- detail page needs the ad body. Keyed by release so an old release can be inspected later.
+CREATE TABLE IF NOT EXISTS gold.job_detail (
+    gold_release_id  TEXT NOT NULL,
+    unified_job_id   TEXT NOT NULL,
+    description      TEXT,
+    requirements     TEXT,
+    benefits         TEXT,
+    expired_date     DATE,
+    posted_date      DATE,
+    source_url       TEXT,
+    loaded_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (gold_release_id, unified_job_id)
+);
+CREATE INDEX IF NOT EXISTS idx_job_detail_job ON gold.job_detail(unified_job_id);

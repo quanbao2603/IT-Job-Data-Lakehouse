@@ -283,6 +283,10 @@ class GoldRepository:
                            FILTER (WHERE s.salary_sample_flag) AS salary_median,
                        COUNT(*) FILTER (WHERE j.city_bucket = 'UNKNOWN')::int AS missing_city,
                        COUNT(*) FILTER (WHERE s.last_seen_at >= NOW() - INTERVAL '14 days')::int AS recent_jobs,
+                       COUNT(*) FILTER (WHERE NOT EXISTS (
+                           SELECT 1 FROM gold.v_job_platform p
+                           WHERE p.job_key = s.job_key
+                             AND p.gold_release_id = s.gold_release_id))::int AS no_platform,
                        MIN(s.last_seen_at)::date AS oldest_last_seen,
                        MAX(s.last_seen_at) AS last_seen_at
                 {base}
@@ -295,6 +299,7 @@ class GoldRepository:
             # The cohort keeps every job the lakehouse ever unified. Say how much of it was
             # actually re-observed lately, so nobody reads the headline as "all hiring now".
             summary["recent_jobs"] = int(summary.get("recent_jobs") or 0)
+            summary["no_platform"] = int(summary.get("no_platform") or 0)
             summary["oldest_last_seen"] = self._text(summary.get("oldest_last_seen"))
             cursor.execute(
                 f"""
@@ -465,6 +470,22 @@ class GoldRepository:
                 return None
             item = dict(zip((item[0] for item in cursor.description), row))
             self._enrich_job_rows(cursor, [item])
+            cursor.execute(
+                """
+                SELECT description, requirements, benefits, expired_date, posted_date, source_url
+                FROM gold.job_detail
+                WHERE gold_release_id = %s AND unified_job_id = %s
+                """,
+                (context.gold_release_id, job_id),
+            )
+            detail = cursor.fetchone()
+            if detail is not None:
+                item.update(dict(zip(
+                    ("description", "requirements", "benefits",
+                     "expired_date", "posted_date", "detail_source_url"), detail,
+                )))
+                item["expired_date"] = self._text(item.get("expired_date"))
+                item["posted_date"] = self._text(item.get("posted_date"))
             return self._with_context(context, {"job": item})
 
     def skills(self, params: FilterParams) -> dict[str, Any]:
@@ -546,6 +567,104 @@ class GoldRepository:
                 context,
                 {"items": items, "total": total, "page": params.page, "page_size": params.page_size},
             )
+
+    def company_profile(self, company_key: str, params: FilterParams) -> dict[str, Any] | None:
+        """Per-company breakdown so the Companies page can show shape, not just a ranking."""
+        where, values = self._where(params)
+        base = f"""
+            FROM gold.v_job_snapshot s
+            JOIN gold.dim_job j ON j.job_key = s.job_key
+            JOIN gold.dim_company c ON c.company_key = s.company_key
+            WHERE {where} AND c.company_key = %s
+        """
+        with self._read_transaction() as (_, cursor):
+            context = self._release_context_from_cursor(cursor)
+            cursor.execute(f"SELECT c.company_display_name, count(*)::int AS jobs, "
+                           f"count(*) FILTER (WHERE s.salary_sample_flag)::int AS salary_samples, "
+                           f"percentile_cont(0.5) WITHIN GROUP (ORDER BY s.salary_midpoint_vnd) "
+                           f"FILTER (WHERE s.salary_sample_flag) AS salary_median {base} "
+                           f"GROUP BY 1", [*values, company_key])
+            head = cursor.fetchone()
+            if head is None:
+                return None
+            profile: dict[str, Any] = {
+                "company_key": company_key,
+                "company_name": head[0],
+                "jobs": int(head[1]),
+                "salary_samples": int(head[2]),
+                "salary_median": float(head[3]) if head[3] is not None else None,
+            }
+            for key, column in (("domains", "COALESCE(j.job_domain, 'UNKNOWN')"),
+                                ("cities", "j.city_bucket"),
+                                ("levels", "COALESCE(j.job_level, 'UNKNOWN')")):
+                cursor.execute(
+                    f"SELECT {column} AS value, count(*)::int AS count {base} "
+                    f"GROUP BY 1 ORDER BY count DESC, value LIMIT 10",
+                    [*values, company_key],
+                )
+                profile[key] = [
+                    {"value": row[0], "count": int(row[1])} for row in cursor.fetchall()
+                ]
+            cursor.execute(
+                f"""SELECT d.skill_name, count(DISTINCT s.unified_job_id)::int AS count
+                    {base}
+                    JOIN gold.v_job_skill f ON f.unified_job_id = s.unified_job_id
+                    JOIN gold.dim_skill d ON d.skill_key = f.skill_key
+                    WHERE NOT d.is_unknown
+                    GROUP BY 1 ORDER BY count DESC, 1 LIMIT 10""",
+                [*values, company_key],
+            )
+            profile["skills"] = [
+                {"value": row[0], "count": int(row[1])} for row in cursor.fetchall()
+            ]
+            return self._with_context(context, {"profile": profile})
+
+    def trends(self, params: FilterParams) -> dict[str, Any]:
+        """Posting activity by week, plus the release history that produced this cohort."""
+        where, values = self._where(params)
+        with self._read_transaction() as (_, cursor):
+            context = self._release_context_from_cursor(cursor)
+            cursor.execute(
+                f"""
+                SELECT date_trunc('week', j.canonical_posted_date)::date AS week_start,
+                       count(*)::int AS jobs,
+                       count(*) FILTER (WHERE s.salary_sample_flag)::int AS salary_samples,
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY s.salary_midpoint_vnd)
+                           FILTER (WHERE s.salary_sample_flag) AS salary_median
+                FROM gold.v_job_snapshot s
+                JOIN gold.dim_job j ON j.job_key = s.job_key
+                JOIN gold.dim_company c ON c.company_key = s.company_key
+                WHERE {where} AND j.canonical_posted_date IS NOT NULL
+                GROUP BY 1 ORDER BY 1 DESC LIMIT 26
+                """,
+                values,
+            )
+            weeks = [
+                {
+                    "week_start": str(row[0]),
+                    "jobs": int(row[1]),
+                    "salary_samples": int(row[2]),
+                    "salary_median": float(row[3]) if row[3] is not None else None,
+                }
+                for row in reversed(cursor.fetchall())
+            ]
+            cursor.execute(
+                """
+                SELECT f.snapshot_date, count(*)::int AS jobs
+                FROM gold.fact_job_daily_snapshot f
+                JOIN gold_control.load_run r ON r.gold_release_id = f.gold_release_id
+                WHERE r.status = 'SUCCESS'
+                  AND r.finished_at = (
+                      SELECT max(r2.finished_at) FROM gold_control.load_run r2
+                      WHERE r2.snapshot_date = r.snapshot_date AND r2.status = 'SUCCESS')
+                GROUP BY 1 ORDER BY 1
+                """
+            )
+            snapshots = [
+                {"snapshot_date": str(row[0]), "jobs": int(row[1])} for row in cursor.fetchall()
+            ]
+            payload = {"weeks": weeks, "snapshots": snapshots}
+            return self._with_context(context, payload)
 
     def quality(self, params: FilterParams | None = None) -> dict[str, Any]:
         with self._read_transaction() as (_, cursor):

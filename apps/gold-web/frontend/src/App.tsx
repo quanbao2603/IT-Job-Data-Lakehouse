@@ -2,18 +2,21 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle, ArrowRight, Bot, Building2, BriefcaseBusiness, CheckCircle2, Coins,
   Download, ExternalLink, Info, LayoutDashboard, Lock, RefreshCw, Search, ShieldCheck,
-  Sparkles, Tags, X,
+  Sparkles, Tags, TrendingUp, X,
 } from 'lucide-react'
 import {
-  api, ApiError, AssistantStatus, CompaniesResponse, DashboardResponse,
-  Filters, Job, JobsResponse, Meta, Option, QualityResponse, SkillsResponse,
+  api, ApiError, AssistantAnswer, AssistantFilters, AssistantStatus, CompaniesResponse,
+  DashboardResponse, Filters, Job, JobsResponse, Meta, Option, QualityResponse, SkillsResponse,
+  CompanyProfile, TrendsResponse,
 } from './api'
+import { Markdown } from './Markdown'
 
-type Page = 'overview' | 'jobs' | 'skills' | 'companies' | 'quality' | 'assistant'
+type Page = 'overview' | 'trends' | 'jobs' | 'skills' | 'companies' | 'quality' | 'assistant'
 
-const PAGES: Page[] = ['overview', 'jobs', 'skills', 'companies', 'quality', 'assistant']
+const PAGES: Page[] = ['overview', 'trends', 'jobs', 'skills', 'companies', 'quality', 'assistant']
 const PAGE_LABELS: Record<Page, string> = {
   overview: 'Tổng quan',
+  trends: 'Xu hướng',
   jobs: 'Tin tuyển dụng',
   skills: 'Kỹ năng',
   companies: 'Doanh nghiệp',
@@ -22,6 +25,7 @@ const PAGE_LABELS: Record<Page, string> = {
 }
 const PAGE_ICONS: Record<Page, React.ReactNode> = {
   overview: <LayoutDashboard size={17} aria-hidden />,
+  trends: <TrendingUp size={17} aria-hidden />,
   jobs: <BriefcaseBusiness size={17} aria-hidden />,
   skills: <Tags size={17} aria-hidden />,
   companies: <Building2 size={17} aria-hidden />,
@@ -30,11 +34,12 @@ const PAGE_ICONS: Record<Page, React.ReactNode> = {
 }
 const PAGE_SUBTITLES: Record<Page, string> = {
   overview: 'Bức tranh tổng quan từ release Gold đang được công bố.',
+  trends: 'Nhịp đăng tin theo tuần và lịch sử các lần cập nhật dữ liệu.',
   jobs: 'Tìm kiếm và khám phá những tin mà hệ thống đã ghi nhận.',
   skills: 'Kỹ năng nào xuất hiện trong tin tuyển dụng và thường đi cùng nhau.',
   companies: 'Cơ cấu tin tuyển dụng của từng doanh nghiệp trong dữ liệu đang công bố.',
   quality: 'Các kiểm tra chất lượng và độ phủ của release đang phục vụ.',
-  assistant: 'Không gian hỏi đáp với dữ liệu thị trường tuyển dụng.',
+  assistant: 'Đặt câu hỏi về lương, kỹ năng, địa điểm hoặc doanh nghiệp.',
 }
 const initialFilters: Filters = { page: 1, page_size: 12, sort: 'recent' }
 const money = new Intl.NumberFormat('vi-VN')
@@ -46,6 +51,15 @@ function readPageFromUrl(): Page {
 }
 function formatMoney(value: number | null) {
   return value == null ? 'Chưa có dữ liệu lương' : `${money.format(value)} đ`
+}
+/** Compact salary for answer cards: same unit the assistant uses in prose. */
+function formatSalary(value: number | null) {
+  if (value == null) return 'Chưa có lương'
+  if (value >= 1_000_000) {
+    const millions = Math.round((value / 1_000_000) * 10) / 10
+    return `${millions.toLocaleString('vi-VN')} triệu VND/tháng`
+  }
+  return `${money.format(value)} đ`
 }
 function formatDate(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString('vi-VN') : 'Chưa xác định'
@@ -133,6 +147,7 @@ type Snapshot = {
   skills?: SkillsResponse
   companies?: CompaniesResponse
   quality?: QualityResponse
+  trends?: TrendsResponse
 }
 
 type FilterOptions = {
@@ -187,6 +202,10 @@ export default function App() {
           const companies = await api.companies(params, controller.signal)
           setSnapshot({ meta: companies.meta, companies })
           if (!releaseId) setReleaseId(companies.meta.gold_release_id)
+        } else if (page === 'trends') {
+          const trends = await api.trends(params, controller.signal)
+          setSnapshot({ meta: trends.meta, trends })
+          if (!releaseId) setReleaseId(trends.meta.gold_release_id)
         } else if (page === 'quality') {
           const quality = await api.quality(params, controller.signal)
           setSnapshot({ meta: quality.meta, quality })
@@ -249,14 +268,17 @@ export default function App() {
 
   const activeChips = useMemo(() => {
     const entries: [keyof Filters, string][] = []
+    // Show the reader's label ("Python"), not the stored code ("python").
+    const labelFor = (list: Option[] | undefined, value: string | undefined) =>
+      (value ? list?.find((item) => item.value === value)?.label ?? value : '')
     if (filters.q) entries.push(['q', `“${filters.q}”`])
-    if (filters.city) entries.push(['city', filters.city])
-    if (filters.domain) entries.push(['domain', filters.domain])
-    if (filters.level) entries.push(['level', filters.level])
-    if (filters.skill) entries.push(['skill', filters.skill])
+    if (filters.city) entries.push(['city', labelFor(options?.cities, filters.city)])
+    if (filters.domain) entries.push(['domain', labelFor(options?.domains, filters.domain)])
+    if (filters.level) entries.push(['level', labelFor(options?.levels, filters.level)])
+    if (filters.skill) entries.push(['skill', labelFor(options?.skills, filters.skill)])
     if (filters.company_key) entries.push(['company_key', 'Công ty đã chọn'])
     return entries
-  }, [filters])
+  }, [filters, options])
 
   const exportCsv = () => {
     const jobs = snapshot?.jobs
@@ -380,6 +402,7 @@ export default function App() {
         {!error && busy && !snapshot && <div className="state-card" role="status"><RefreshCw className="spin" aria-hidden /> Đang tải dữ liệu…</div>}
         {!error && snapshot && <div className={busy ? 'refreshing' : undefined}>
           {page === 'overview' && snapshot.dashboard && <Overview data={snapshot.dashboard} onCompany={drillToCompany} onSkill={drillToSkill} />}
+          {page === 'trends' && snapshot.trends && <Trends data={snapshot.trends} />}
           {page === 'jobs' && snapshot.jobs && <Jobs
             data={snapshot.jobs}
             sort={filters.sort ?? 'recent'}
@@ -391,7 +414,30 @@ export default function App() {
           {page === 'skills' && snapshot.skills && <Skills data={snapshot.skills} onSkill={drillToSkill} />}
           {page === 'companies' && snapshot.companies && <Companies data={snapshot.companies} onSelect={drillToCompany} onPage={goToPage} />}
           {page === 'quality' && snapshot.quality && <Quality data={snapshot.quality} />}
-          {page === 'assistant' && <Assistant status={assistant} />}
+          {page === 'assistant' && <Assistant
+            status={assistant}
+            onOpenJob={(jobId) => setSelectedJobId(jobId)}
+            onSearchJobs={(next) => {
+              // The answer names a skill ("Python"); the jobs API filters by code ("python").
+              const mapped: Filters = { ...next }
+              const skill = mapped.skill?.trim()
+              if (skill) {
+                const match = options?.skills.find((item) =>
+                  item.value.toLowerCase() === skill.toLowerCase()
+                  || item.label.toLowerCase() === skill.toLowerCase())
+                mapped.skill = match ? match.value : skill.toLowerCase()
+              }
+              const domain = mapped.domain?.trim()
+              if (domain) {
+                const match = options?.domains.find((item) =>
+                  item.value.toLowerCase() === domain.toLowerCase()
+                  || item.label.toLowerCase() === domain.toLowerCase())
+                if (match) mapped.domain = match.value
+              }
+              setFilters(mapped)
+              setPage('jobs')
+            }}
+          />}
         </div>}
 
         <footer className="footer">
@@ -516,7 +562,10 @@ function Overview({ data, onCompany, onSkill }: { data: DashboardResponse; onCom
     </div>
     <div className="grid-two">
       <Distribution title="Theo cấp bậc" hint="Cấp bậc chuẩn hóa của tin" items={data.levels} />
-      <Distribution title="nền tảng" hint="Số tin theo từng nguồn dữ liệu" items={data.platforms} />
+      <Distribution title="nền tảng" hint="Số tin theo từng nguồn dữ liệu" items={data.platforms}
+        note={data.summary.no_platform > 0
+          ? `${number.format(data.summary.no_platform)} tin chưa có bằng chứng nền tảng trong 14 ngày nên không nằm trong biểu đồ này.`
+          : undefined} />
     </div>
   </>
 }
@@ -532,7 +581,7 @@ function Metric({ icon, tone, label, value, unit, note }: { icon: React.ReactNod
   </div>
 }
 
-function Distribution({ title, hint, items }: { title: string; hint: string; items: { value: string; label?: string; count: number }[] }) {
+function Distribution({ title, hint, items, note }: { title: string; hint: string; items: { value: string; label?: string; count: number }[]; note?: string }) {
   const max = Math.max(1, ...items.map((item) => item.count))
   return <section className="panel">
     <div className="panel-heading">
@@ -547,6 +596,7 @@ function Distribution({ title, hint, items }: { title: string; hint: string; ite
       </div>)}
     </div>
     {items.length > 8 && <p className="panel-note">Hiển thị 8 trong {items.length} nhóm lớn nhất.</p>}
+    {note && <p className="panel-note">{note}</p>}
   </section>
 }
 
@@ -744,8 +794,68 @@ function Skills({ data, onSkill }: { data: SkillsResponse; onSkill: (code: strin
 
 function Companies({ data, onSelect, onPage }: { data: CompaniesResponse; onSelect: (key: string) => void; onPage: (page: number) => void }) {
   const totalPages = Math.max(1, Math.ceil(data.total / data.page_size))
+  const [profile, setProfile] = useState<CompanyProfile | null>(null)
+  const [profileError, setProfileError] = useState('')
+  const [profileBusy, setProfileBusy] = useState(false)
+  const [openKey, setOpenKey] = useState<string | null>(null)
+
+  const showProfile = async (key: string) => {
+    if (openKey === key) {
+      setOpenKey(null)
+      setProfile(null)
+      return
+    }
+    setOpenKey(key)
+    setProfile(null)
+    setProfileError('')
+    setProfileBusy(true)
+    try {
+      const payload = await api.companyProfile(key, { expected_release_id: data.meta.gold_release_id })
+      setProfile(payload.profile)
+    } catch (caught) {
+      setProfileError(caught instanceof Error ? caught.message : 'Không tải được cấu trúc doanh nghiệp.')
+    } finally {
+      setProfileBusy(false)
+    }
+  }
+
   return <>
     <ReleaseNote meta={data.meta} />
+    {openKey && <section className="panel company-profile">
+      <div className="panel-heading">
+        <div><h2>{profile ? profile.company_name : 'Cấu trúc doanh nghiệp'}</h2>
+          <p>{profile ? `${number.format(profile.jobs)} tin · ${number.format(profile.salary_samples)} mẫu lương${profile.salary_median ? ` · trung vị ${formatMoney(profile.salary_median)}` : ''}` : 'Đang tải…'}</p></div>
+        <button type="button" className="button small" onClick={() => { setOpenKey(null); setProfile(null) }}>Đóng</button>
+      </div>
+      {profileBusy && <p className="muted" style={{ padding: '0 21px 18px' }}><RefreshCw className="spin" size={14} aria-hidden /> Đang tải cấu trúc…</p>}
+      {profileError && <p className="muted" style={{ padding: '0 21px 18px' }}>{profileError}</p>}
+      {profile && <div className="profile-grid">
+        <div><h3>Chuyên môn</h3>{profile.domains.length
+          ? profile.domains.map((item) => <div className="bar-row" key={item.value}>
+            <div className="bar-label"><span>{bucketLabel(item.value)}</span><b>{number.format(item.count)}</b></div>
+            <div className="bar-track"><span style={{ width: `${Math.max(3, (item.count / Math.max(1, ...profile.domains.map((d) => d.count))) * 100)}%` }} /></div>
+          </div>)
+          : <p className="muted">Chưa có dữ liệu.</p>}</div>
+        <div><h3>Địa điểm</h3>{profile.cities.length
+          ? profile.cities.map((item) => <div className="bar-row" key={item.value}>
+            <div className="bar-label"><span>{bucketLabel(item.value)}</span><b>{number.format(item.count)}</b></div>
+            <div className="bar-track"><span style={{ width: `${Math.max(3, (item.count / Math.max(1, ...profile.cities.map((d) => d.count))) * 100)}%` }} /></div>
+          </div>)
+          : <p className="muted">Chưa có dữ liệu.</p>}</div>
+        <div><h3>Cấp bậc</h3>{profile.levels.length
+          ? profile.levels.map((item) => <div className="bar-row" key={item.value}>
+            <div className="bar-label"><span>{bucketLabel(item.value)}</span><b>{number.format(item.count)}</b></div>
+            <div className="bar-track"><span style={{ width: `${Math.max(3, (item.count / Math.max(1, ...profile.levels.map((d) => d.count))) * 100)}%` }} /></div>
+          </div>)
+          : <p className="muted">Chưa có dữ liệu.</p>}</div>
+        <div><h3>Kỹ năng</h3>{profile.skills.length
+          ? profile.skills.map((item) => <div className="bar-row" key={item.value}>
+            <div className="bar-label"><span>{item.value}</span><b>{number.format(item.count)}</b></div>
+            <div className="bar-track"><span style={{ width: `${Math.max(3, (item.count / Math.max(1, ...profile.skills.map((d) => d.count))) * 100)}%` }} /></div>
+          </div>)
+          : <p className="muted">Chưa ghi nhận kỹ năng.</p>}</div>
+      </div>}
+    </section>}
     <p className="section-kicker">{number.format(data.total)} doanh nghiệp theo tên đã chuẩn hóa; mỗi doanh nghiệp có thể có nhiều tin.</p>
     {data.items.length === 0 && <div className="empty-card">Không có doanh nghiệp phù hợp bộ lọc.</div>}
     <div className="company-grid">
@@ -758,7 +868,18 @@ function Companies({ data, onSelect, onPage }: { data: CompaniesResponse; onSele
           <div><strong>{number.format(item.domain_count)}</strong><span>chuyên môn</span></div>
           <div><strong>{number.format(item.salary_samples)}</strong><span>mẫu lương</span></div>
         </div>
-        <span className="button small">Xem tin của công ty <ArrowRight size={13} aria-hidden /></span>
+        <span className="company-actions">
+          <span className="button small">Xem tin của công ty <ArrowRight size={13} aria-hidden /></span>
+          <span
+            role="button"
+            tabIndex={0}
+            className="button small ghost"
+            onClick={(event) => { event.stopPropagation(); void showProfile(item.company_key) }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); void showProfile(item.company_key) }
+            }}
+          >{openKey === item.company_key ? 'Ẩn cấu trúc' : 'Cấu trúc'}</span>
+        </span>
       </button>)}
     </div>
     <div className="pagination">
@@ -768,6 +889,66 @@ function Companies({ data, onSelect, onPage }: { data: CompaniesResponse; onSele
         <button type="button" className="button small" disabled={data.page >= totalPages} onClick={() => onPage(data.page + 1)}>Sau →</button>
       </div>
     </div>
+  </>
+}
+
+function Trends({ data }: { data: TrendsResponse }) {
+  const weeks = data.weeks
+  const max = Math.max(1, ...weeks.map((w) => w.jobs))
+  const lastFour = weeks.slice(-4)
+  const avg = lastFour.length ? Math.round(lastFour.reduce((sum, w) => sum + w.jobs, 0) / lastFour.length) : 0
+  const latest = weeks[weeks.length - 1]
+  const withSalary = weeks.filter((w) => w.salary_samples > 0)
+  return <>
+    <ReleaseNote meta={data.meta} />
+    <div className="metric-grid">
+      <Metric icon={<TrendingUp size={18} aria-hidden />} tone="green" label="Tuần gần nhất"
+        value={latest ? number.format(latest.jobs) : '—'} note={latest ? `tuần bắt đầu ${formatDay(latest.week_start)}` : 'chưa có dữ liệu'} />
+      <Metric icon={<BriefcaseBusiness size={18} aria-hidden />} tone="blue" label="Trung bình 4 tuần"
+        value={number.format(avg)} note={`trên ${lastFour.length} tuần gần nhất`} />
+      <Metric icon={<Coins size={18} aria-hidden />} tone="amber" label="Tuần nhiều tin nhất"
+        value={number.format(Math.max(...weeks.map((w) => w.jobs), 0))}
+        note={weeks.length ? formatDay(weeks.reduce((best, w) => (w.jobs > best.jobs ? w : best), weeks[0]).week_start) : '—'} />
+      <Metric icon={<Tags size={18} aria-hidden />} tone="violet" label="Tuần có dữ liệu lương"
+        value={`${withSalary.length}/${weeks.length}`} note="tuần có ít nhất một mẫu lương" />
+    </div>
+
+    <section className="panel">
+      <div className="panel-heading">
+        <div><h2>Số tin theo tuần đăng</h2><p>Dựa trên ngày đăng của tin đã hợp nhất; tuần có ít tin có thể là tuần ít nguồn được cào</p></div>
+        <span className="muted-badge">{weeks.length} tuần</span>
+      </div>
+      {weeks.length === 0
+        ? <p className="muted" style={{ padding: '0 21px 18px' }}>Chưa có ngày đăng tin để dựng xu hướng.</p>
+        : <div className="trend-chart" role="img"
+            aria-label={weeks.map((w) => `${formatDay(w.week_start)}: ${w.jobs} tin`).join(', ')}>
+          {weeks.map((week) => <div className="trend-column" key={week.week_start}>
+            <b>{number.format(week.jobs)}</b>
+            <div className="trend-bar" style={{ height: `${Math.max(4, (week.jobs / max) * 100)}%` }} />
+            <span>{formatDay(week.week_start).slice(0, 5)}</span>
+          </div>)}
+        </div>}
+    </section>
+
+    <section className="panel">
+      <div className="panel-heading"><div><h2>Lịch sử cập nhật dữ liệu</h2><p>Mỗi mốc là một release Gold đã công bố và số tin trong cohort lúc đó</p></div></div>
+      <div className="table-wrap">
+        <div className="table-head coverage-columns"><span>Ngày dữ liệu</span><span>Số tin</span><span className="num">Thay đổi</span></div>
+        {data.snapshots.length === 0 && <p className="muted" style={{ padding: '0 21px 18px' }}>Chưa có lịch sử release.</p>}
+        {data.snapshots.map((row, index) => {
+          const previous = index > 0 ? data.snapshots[index - 1].jobs : null
+          const delta = previous == null ? null : row.jobs - previous
+          return <div className="check-row coverage-columns" key={row.snapshot_date}>
+            <span>{formatDay(row.snapshot_date)}</span>
+            <span>{number.format(row.jobs)}</span>
+            <span className={`num ${delta == null ? '' : delta >= 0 ? 'check-ok' : 'check-fail'}`}>
+              {delta == null ? '—' : `${delta >= 0 ? '+' : ''}${number.format(delta)}`}
+            </span>
+          </div>
+        })}
+      </div>
+      <p className="panel-note">Số tin của một ngày là release công bố sau cùng trong ngày đó. Chênh lệch âm nghĩa là cohort thu hẹp sau khi sửa dữ liệu, không phải mất nguồn.</p>
+    </section>
   </>
 }
 
@@ -835,13 +1016,75 @@ function Quality({ data }: { data: QualityResponse }) {
   </>
 }
 
-function Assistant({ status }: { status: AssistantStatus | null }) {
-  const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string; sql?: string | null }[]>([])
+const FILTER_LABELS: Record<string, string> = {
+  city: 'Địa điểm',
+  title_keyword: 'Từ khoá trong tên tin',
+  job_domain: 'Chuyên môn',
+  job_levels: 'Cấp bậc',
+  skill: 'Kỹ năng',
+  company: 'Doanh nghiệp',
+  salary_only: 'Tin có lương',
+  recent_days: 'Ghi nhận trong',
+}
+const FILTER_ORDER = ['city', 'title_keyword', 'job_domain', 'job_levels', 'skill', 'company', 'salary_only', 'recent_days']
+
+function filterEntries(filters: AssistantFilters): [string, string][] {
+  const entries: [string, string][] = []
+  for (const key of FILTER_ORDER) {
+    const value = (filters as Record<string, unknown>)[key]
+    if (value === undefined || value === null || value === '') continue
+    if (key === 'salary_only') {
+      if (value === true) entries.push([key, 'Chỉ tin có lương'])
+      continue
+    }
+    if (key === 'recent_days') {
+      entries.push([key, `${value} ngày gần nhất`])
+      continue
+    }
+    if (Array.isArray(value)) {
+      if (value.length) entries.push([key, value.join(', ')])
+      continue
+    }
+    entries.push([key, String(value)])
+  }
+  return entries
+}
+
+function toJobFilters(filters: AssistantFilters): Filters {
+  const mapped: Filters = { page: 1, page_size: 12, sort: 'recent' }
+  if (filters.city) mapped.city = filters.city
+  if (filters.title_keyword) mapped.q = filters.title_keyword
+  if (filters.job_domain) mapped.domain = filters.job_domain
+  if (filters.skill) mapped.skill = filters.skill
+  // The jobs endpoint filters one level at a time; carrying only the first level of a
+  // comparison would silently drop the other group, so the list opens for all levels.
+  return mapped
+}
+
+type ChatMessage = {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  answer?: AssistantAnswer
+  question?: string
+  failed?: boolean
+}
+
+function Assistant({ status, onOpenJob, onSearchJobs }: {
+  status: AssistantStatus | null
+  onOpenJob: (jobId: string) => void
+  onSearchJobs: (filters: Filters) => void
+}) {
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
+  const controllerRef = useRef<AbortController | null>(null)
+  const abortReason = useRef<'cancel' | 'timeout' | null>(null)
+  const counter = useRef(0)
+  const nextId = () => `msg-${counter.current++}`
 
   useEffect(() => {
     if (!busy) {
@@ -855,8 +1098,6 @@ function Assistant({ status }: { status: AssistantStatus | null }) {
 
   useEffect(() => {
     const list = listRef.current
-    // scrollTo is missing in some webviews (and in jsdom), so guard it instead of
-    // letting a cosmetic detail break the chat render.
     if (list && typeof list.scrollTo === 'function') {
       list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
     }
@@ -869,102 +1110,204 @@ function Assistant({ status }: { status: AssistantStatus | null }) {
       return
     }
     if (busy) return
-    const history = messages.slice(-6).map((m) => ({ role: m.role, content: m.content }))
-    setMessages((prev) => [...prev, { role: 'user', content: trimmed }])
+    const history = messages
+      .filter((message) => !message.failed)
+      .slice(-6)
+      .map((message) => ({ role: message.role, content: message.content }))
+    setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: trimmed }])
     setInput('')
     setError('')
     setBusy(true)
-    // A comparison question can take a minute; abort clearly instead of spinning forever.
     const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), 180_000)
+    controllerRef.current = controller
+    abortReason.current = null
+    // The server has its own deadline; this guard only stops the browser waiting forever.
+    const timer = window.setTimeout(() => {
+      abortReason.current = 'timeout'
+      controller.abort()
+    }, 100_000)
     try {
       const payload = await api.assistantAsk(trimmed, history, controller.signal)
-      const answer = (payload.answer || '').trim()
       setMessages((prev) => [...prev, {
+        id: nextId(),
         role: 'assistant',
-        content: answer || 'Mình chưa tạo được câu trả lời cho câu hỏi này. Bạn thử hỏi cụ thể hơn (ví dụ: "lương trung vị của nhóm Dữ liệu & AI").',
-        sql: payload.sql,
+        content: payload.answer_markdown,
+        answer: payload,
       }])
     } catch (caught) {
-      const aborted = caught instanceof DOMException && caught.name === 'AbortError'
-      const message = aborted
-        ? 'Trợ lý phản hồi quá lâu (quá 3 phút). Bạn thử hỏi ngắn hơn hoặc hỏi lại.'
-        : caught instanceof Error ? caught.message : 'Không gọi được trợ lý.'
-      setError(message)
-      setMessages((prev) => [...prev, { role: 'assistant', content: message }])
+      const cancelled = abortReason.current === 'cancel'
+      const timedOut = abortReason.current === 'timeout'
+      const message = cancelled
+        ? 'Bạn đã hủy câu hỏi này.'
+        : timedOut
+          ? 'Câu hỏi này mất nhiều thời gian hơn dự kiến. Bạn thử lại hoặc hỏi ngắn hơn nhé.'
+          : caught instanceof Error && caught.message
+            ? caught.message
+            : 'Chưa thể tải kết quả. Bạn thử lại sau nhé.'
+      if (!cancelled) setError(message)
+      setMessages((prev) => [...prev, {
+        id: nextId(),
+        role: 'assistant',
+        content: message,
+        question: trimmed,
+        failed: !cancelled,
+      }])
     } finally {
-      window.clearTimeout(timeout)
+      window.clearTimeout(timer)
+      controllerRef.current = null
+      abortReason.current = null
       setBusy(false)
     }
   }
 
   const ready = Boolean(status?.enabled)
 
-  return <div className="assistant-layout">
-    <section className="assistant-main">
-      <div className="assistant-head">
-        <div className="ai-symbol"><Bot size={26} aria-hidden /></div>
+  return <section className="assistant-panel">
+    <div className="assistant-head">
+      <div className="ai-symbol"><Bot size={24} aria-hidden /></div>
+      <div>
+        <span className="eyebrow">Trợ lý dữ liệu</span>
+        <h2>Trợ lý AI</h2>
+      </div>
+      <span className={ready ? 'status-pill ok' : 'status-pill'}>
+        {ready ? 'Đang hoạt động' : 'Chưa sẵn sàng'}
+      </span>
+    </div>
+    <p className="assistant-sub">{ready
+      ? 'Đặt câu hỏi về lương, kỹ năng, địa điểm hoặc doanh nghiệp.'
+      : status?.message ?? 'Đang kiểm tra trạng thái trợ lý…'}</p>
+
+    <div className="chat-log" ref={listRef} role="log" aria-live="polite" aria-label="Hội thoại với trợ lý">
+      {messages.length === 0 && <div className="chat-empty">
+        <Sparkles size={16} aria-hidden />
         <div>
-          <span className="eyebrow">Trợ lý dữ liệu</span>
-          <h2>Hỏi thẳng vào dữ liệu Gold</h2>
+          <p className="chat-empty-title">Bắt đầu bằng một câu hỏi</p>
+          <p>Ví dụ: so sánh lương giữa hai cấp bậc, đếm số tin theo địa điểm, hoặc tìm tin theo kỹ năng.</p>
         </div>
-        <span className={ready ? 'status-pill ok' : 'status-pill'}>
-          {ready ? 'Đang hoạt động' : 'Chưa cấu hình mô hình'}
-        </span>
-      </div>
-      <p className="assistant-sub">{status?.message ?? 'Đang kiểm tra trạng thái trợ lý…'}</p>
-
-      <div className="chat-log" ref={listRef} role="log" aria-live="polite">
-        {messages.length === 0 && <div className="chat-empty">
-          <Sparkles size={16} aria-hidden />
-          <p>Đặt câu hỏi về lương, kỹ năng, địa điểm hoặc doanh nghiệp. Trợ lý tự sinh SQL, chạy trên Gold ở chế độ chỉ đọc rồi diễn giải kết quả.</p>
-        </div>}
-        {messages.map((message, index) => <div className={`chat-bubble ${message.role}`} key={`${message.role}-${index}`}>
-          <p>{message.content}</p>
-          {message.sql && <details className="chat-sql">
-            <summary>SQL đã chạy</summary>
-            <pre>{message.sql}</pre>
-          </details>}
+      </div>}
+      {messages.map((message) => message.role === 'user'
+        ? <div className="chat-bubble user" key={message.id}><p>{message.content}</p></div>
+        : <div className={`chat-bubble assistant${message.failed ? ' failed' : ''}`} key={message.id}>
+          {message.failed
+            ? <p className="chat-failure">{message.content}</p>
+            : <Markdown text={message.content} />}
+          {message.answer && <AnswerResult answer={message.answer} onOpenJob={onOpenJob} onSearchJobs={onSearchJobs} />}
+          {message.failed && message.question && <button
+            type="button"
+            className="button small chat-retry"
+            onClick={() => {
+              setMessages((prev) => prev.filter((item) => item.id !== message.id))
+              void send(message.question as string)
+            }}
+          >Thử lại</button>}
         </div>)}
-        {busy && <div className="chat-bubble assistant"><p className="muted"><RefreshCw className="spin" size={14} aria-hidden /> Đang truy vấn Gold… {elapsed > 0 && `${elapsed}s`}</p></div>}
-      </div>
+      {busy && <div className="chat-bubble assistant chat-pending">
+        <span className="pending-label"><RefreshCw className="spin" size={14} aria-hidden /> đang truy vấn{elapsed > 0 ? ` · ${elapsed}s` : ''}</span>
+        <button type="button" className="button small" onClick={() => {
+          abortReason.current = 'cancel'
+          controllerRef.current?.abort()
+        }}>Hủy</button>
+      </div>}
+    </div>
 
-      {error && <p className="chat-error" role="alert"><AlertCircle size={14} aria-hidden /> {error}</p>}
+    {error && !busy && <p className="chat-error" role="alert"><AlertCircle size={14} aria-hidden /> {error}</p>}
 
-      <form className="chat-input" onSubmit={(event) => { event.preventDefault(); void send(input) }}>
-        <input
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder={ready ? 'Ví dụ: lương trung vị của kỹ sư dữ liệu là bao nhiêu?' : 'Cần cấu hình API key cho mô hình trước'}
-          aria-label="Câu hỏi cho trợ lý AI"
-          disabled={!ready || busy}
-          maxLength={500}
-        />
-        <button type="submit" disabled={!ready || busy || !input.trim()}>Gửi</button>
-      </form>
+    <form className="chat-input" onSubmit={(event) => { event.preventDefault(); void send(input) }}>
+      <textarea
+        value={input}
+        onChange={(event) => setInput(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault()
+            void send(input)
+          }
+        }}
+        rows={2}
+        placeholder={ready ? 'Ví dụ: lương trung vị của Data Engineer là bao nhiêu?' : 'Trợ lý chưa sẵn sàng'}
+        aria-label="Câu hỏi cho trợ lý AI"
+        disabled={!ready || busy}
+        maxLength={500}
+      />
+      <button type="submit" disabled={!ready || busy || !input.trim()}>Gửi</button>
+    </form>
 
-      <div className="prompt-examples">
-        {(status?.examples ?? []).map((example) => <button
-          type="button"
-          key={example}
-          className="example-chip"
-          disabled={!ready || busy}
-          onClick={() => void send(example)}
-        ><Sparkles size={13} aria-hidden />{example}</button>)}
-      </div>
-    </section>
-    <aside className="assistant-aside">
-      <ShieldCheck size={22} className="panel-icon" aria-hidden />
-      <h3>Câu trả lời gắn với dữ liệu</h3>
-      <p>Trợ lý chỉ đọc tầng Gold qua một tool duy nhất, có kiểm soát:</p>
-      <ul>
-        <li><CheckCircle2 size={14} aria-hidden /> Chỉ cho phép một câu SELECT, giới hạn số dòng</li>
-        <li><CheckCircle2 size={14} aria-hidden /> Chặn ghi/xoá và mọi schema ngoài Gold</li>
-        <li><CheckCircle2 size={14} aria-hidden /> Câu trả lời kèm ngày cập nhật và phạm vi</li>
-        <li><CheckCircle2 size={14} aria-hidden /> Hiển thị lại SQL để kiểm chứng</li>
-      </ul>
-      <p className="aside-note">Số liệu vẫn khám phá được trực tiếp qua Tổng quan, Tin tuyển dụng, Kỹ năng và Doanh nghiệp.</p>
-    </aside>
+    <div className="prompt-examples">
+      {(status?.examples ?? []).map((example) => <button
+        type="button"
+        key={example}
+        className="example-chip"
+        disabled={!ready || busy}
+        onClick={() => void send(example)}
+      ><Sparkles size={13} aria-hidden />{example}</button>)}
+    </div>
+  </section>
+}
+
+function AnswerResult({ answer, onOpenJob, onSearchJobs }: {
+  answer: AssistantAnswer
+  onOpenJob: (jobId: string) => void
+  onSearchJobs: (filters: Filters) => void
+}) {
+  const filters = filterEntries(answer.applied_filters)
+  const jobs = answer.result.kind === 'jobs' ? answer.result.jobs : []
+  const table = answer.result.kind === 'table' ? answer.result : null
+  const dataDate = answer.data_context?.snapshot_date
+  const canOpenList = filters.length > 0
+
+  return <div className="answer-extras">
+    {filters.length > 0 && <div className="answer-filters">
+      <span className="answer-label">Bộ lọc</span>
+      {filters.map(([key, label]) => <span className="answer-chip" key={key}>
+        <em>{FILTER_LABELS[key] ?? key}</em>{label}
+      </span>)}
+    </div>}
+
+    {jobs.length > 0 && <div className="answer-jobs">
+      {jobs.map((job) => <article className="answer-job" key={job.job_id}>
+        <div className="answer-job-main">
+          <h3>{job.title}</h3>
+          <p>{job.company ?? 'Chưa xác định doanh nghiệp'}</p>
+          <div className="job-meta">
+            <span><em>Địa điểm</em>{job.city ?? 'Chưa xác định'}</span>
+            <span><em>Cấp bậc</em>{job.level ?? 'Chưa xác định'}</span>
+          </div>
+        </div>
+        <div className="answer-job-side">
+          <strong className={job.salary_sample_flag ? 'salary' : 'salary muted-salary'}>
+            {job.salary_midpoint_vnd == null ? 'Chưa có lương' : formatSalary(job.salary_midpoint_vnd)}
+          </strong>
+          <small>Ghi nhận {job.last_seen_at ? formatDate(job.last_seen_at) : 'chưa xác định'}</small>
+          <div className="answer-job-actions">
+            <button type="button" className="button small primary-action" onClick={() => onOpenJob(job.job_id)}>Xem chi tiết</button>
+            {job.source_url && /^https?:\/\//i.test(job.source_url) && <a
+              className="button small"
+              href={job.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >Xem tin gốc</a>}
+          </div>
+        </div>
+      </article>)}
+    </div>}
+
+    {table && <div className="md-table-wrap answer-table">
+      <table className="md-table">
+        <thead><tr>{table.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
+        <tbody>
+          {table.rows.map((row, rowIndex) => <tr key={rowIndex}>
+            {table.columns.map((column) => <td key={column}>{String(row[column] ?? '—')}</td>)}
+          </tr>)}
+        </tbody>
+      </table>
+      {table.truncated && <p className="answer-note">Bảng hiển thị một phần kết quả; số liệu trong câu trả lời tính trên toàn bộ phạm vi lọc.</p>}
+    </div>}
+
+    <div className="answer-footer">
+      {dataDate && <span className="answer-date">Dữ liệu ngày {formatDay(dataDate)}</span>}
+      {canOpenList && <button type="button" className="button small" onClick={() => onSearchJobs(toJobFilters(answer.applied_filters))}>
+        Xem tất cả tin phù hợp <ArrowRight size={13} aria-hidden />
+      </button>}
+    </div>
   </div>
 }
 
@@ -1031,6 +1374,25 @@ function JobModal({ jobId, releaseId, onClose }: { jobId: string; releaseId?: st
         <div className="skill-tags large">
           {job.skills.length ? job.skills.map((skill) => <span key={skill.skill_code}>{skill.skill_name}</span>) : <span>Chưa xác định</span>}
         </div>
+        {(job.posted_date || job.expired_date) && <div className="detail-grid">
+          {job.posted_date && <div><small>Ngày đăng</small><b>{formatDay(job.posted_date)}</b></div>}
+          {job.expired_date && <div><small>Hạn nộp</small><b>{formatDay(job.expired_date)}</b></div>}
+        </div>}
+        {job.description && <details className="ad-section" open>
+          <summary>Mô tả công việc</summary>
+          <p>{job.description}</p>
+        </details>}
+        {job.requirements && <details className="ad-section">
+          <summary>Yêu cầu ứng viên</summary>
+          <p>{job.requirements}</p>
+        </details>}
+        {job.benefits && <details className="ad-section">
+          <summary>Phúc lợi</summary>
+          <p>{job.benefits}</p>
+        </details>}
+        {!job.description && !job.requirements && !job.benefits && (
+          <p className="muted">Nguồn không cung cấp nội dung mô tả cho tin này.</p>
+        )}
         <h3>Nguồn đăng tuyển</h3>
         {job.source_urls.length > 0
           ? <ul className="source-list">

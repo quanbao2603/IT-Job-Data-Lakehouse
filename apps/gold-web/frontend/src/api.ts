@@ -46,6 +46,11 @@ export type Job = {
   observation_count?: number
   last_seen_at: string | null
   days_since_last_seen: number | null
+  description?: string | null
+  requirements?: string | null
+  benefits?: string | null
+  expired_date?: string | null
+  posted_date?: string | null
   snapshot_cutoff_at?: string
   skills: { skill_code: string; skill_name: string }[]
   platforms: string[]
@@ -54,11 +59,27 @@ export type Job = {
 }
 export type DashboardResponse = {
   meta: Meta
-  summary: { jobs: number; companies: number; skills: number; salary_samples: number; salary_median: number | null; missing_city: number; recent_jobs: number; oldest_last_seen: string | null; last_seen_at: string | null }
+  summary: { jobs: number; companies: number; skills: number; salary_samples: number; salary_median: number | null; missing_city: number; recent_jobs: number; no_platform: number; oldest_last_seen: string | null; last_seen_at: string | null }
   domains: Option[]; cities: Option[]; levels: Option[]; companies: Option[]; skills: Option[]; platforms: Option[]
 }
 export type JobsResponse = { meta: Meta; items: Job[]; total: number; page: number; page_size: number }
 export type SkillsResponse = { meta: Meta; items: { skill_code: string; skill_name: string; job_count: number }[]; pairs: { skill_a: string; skill_a_name: string; skill_b: string; skill_b_name: string; job_count: number }[] }
+export type TrendsResponse = {
+  meta: Meta
+  weeks: { week_start: string; jobs: number; salary_samples: number; salary_median: number | null }[]
+  snapshots: { snapshot_date: string; jobs: number }[]
+}
+export type CompanyProfile = {
+  company_key: string
+  company_name: string
+  jobs: number
+  salary_samples: number
+  salary_median: number | null
+  domains: Option[]
+  cities: Option[]
+  levels: Option[]
+  skills: Option[]
+}
 export type CompaniesResponse = { meta: Meta; items: { company_key: string; company_name: string; job_count: number; city_count: number; domain_count: number; salary_samples: number }[]; total: number; page: number; page_size: number }
 export type QualityResponse = {
   meta: Meta
@@ -73,13 +94,41 @@ export type QualityResponse = {
   }
 }
 export type AssistantStatus = { enabled: boolean; status: string; message: string; examples: string[] }
+export type AssistantJob = {
+  job_id: string
+  title: string
+  company: string | null
+  city: string | null
+  level: string | null
+  salary_midpoint_vnd: number | null
+  salary_min_vnd: number | null
+  salary_max_vnd: number | null
+  salary_sample_flag: boolean | null
+  last_seen_at: string | null
+  source_url: string | null
+}
+export type AssistantFilters = {
+  city?: string
+  title_keyword?: string
+  job_domain?: string
+  job_levels?: string[]
+  skill?: string
+  company?: string
+  salary_only?: boolean
+  recent_days?: number
+}
+export type AssistantResult =
+  | { kind: 'none' }
+  | { kind: 'jobs'; jobs: AssistantJob[]; row_count: number; truncated: boolean }
+  | { kind: 'table'; columns: string[]; rows: Record<string, unknown>[]; row_count: number; truncated: boolean }
 export type AssistantAnswer = {
-  answer: string
-  sql: string | null
-  rows: Record<string, unknown>[]
-  steps: number
-  provider: string
-  model: string
+  request_id: string
+  answer_type: string
+  answer_markdown: string
+  data_context: { snapshot_date?: string; timezone?: string }
+  applied_filters: AssistantFilters
+  result: AssistantResult
+  warnings: string[]
 }
 
 const INSIGHTS_PREFIX = /^\/insights(\/|$)/.test(window.location.pathname) ? '/insights' : ''
@@ -134,6 +183,9 @@ export const api = {
   skills: (filters: Filters, signal?: AbortSignal) => request<SkillsResponse>('/skills', filters, signal),
   companies: (filters: Filters, signal?: AbortSignal) => request<CompaniesResponse>('/companies', filters, signal),
   quality: (filters: Filters = {}, signal?: AbortSignal) => request<QualityResponse>('/quality', filters, signal),
+  trends: (filters: Filters = {}, signal?: AbortSignal) => request<TrendsResponse>('/trends', filters, signal),
+  companyProfile: (key: string, filters: Filters = {}, signal?: AbortSignal) =>
+    request<{ meta: Meta; profile: CompanyProfile }>(`/companies/${encodeURIComponent(key)}/profile`, filters, signal),
   assistantStatus: () => request<AssistantStatus>('/assistant/status'),
   assistantAsk: (question: string, history: { role: string; content: string }[], signal?: AbortSignal) =>
     request<AssistantAnswer>('/assistant/ask', undefined, signal, { question, history }),

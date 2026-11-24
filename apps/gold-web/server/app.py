@@ -202,6 +202,27 @@ def create_app(
     ) -> dict[str, object]:
         return with_meta(repo, repo.companies(params), params)
 
+    @app.get("/api/trends")
+    def trends(
+        params: FilterParams = Depends(),
+        repo: GoldRepository = Depends(repository),
+    ) -> dict[str, object]:
+        return with_meta(repo, repo.trends(params), params)
+
+    @app.get("/api/companies/{company_key}/profile")
+    def company_profile(
+        company_key: str,
+        params: FilterParams = Depends(),
+        repo: GoldRepository = Depends(repository),
+    ) -> dict[str, object]:
+        payload = repo.company_profile(company_key, params)
+        if payload is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "COMPANY_NOT_FOUND", "message": "Không tìm thấy doanh nghiệp trong release này."},
+            )
+        return with_meta(repo, payload, params)
+
     @app.get("/api/quality")
     def quality(
         params: FilterParams = Depends(),
@@ -227,11 +248,13 @@ def create_app(
                 "message": "Trợ lý đã sẵn sàng nhưng chưa có API key cho mô hình ngôn ngữ.",
                 "examples": ASSISTANT_EXAMPLES,
             }
+        # No provider, model or layer names here: the page is an application, not a
+        # console. The identity of the model stays in the agent's own config.
         return {
             "enabled": True,
             "status": "ready",
-            "message": f"Trợ lý dùng {health.get('provider')} · {health.get('model')}, "
-                       f"truy vấn Gold ở chế độ chỉ đọc.",
+            "message": "Trợ lý đang hoạt động. Đặt câu hỏi về lương, kỹ năng, "
+                       "địa điểm hoặc doanh nghiệp.",
             "examples": ASSISTANT_EXAMPLES,
         }
 
@@ -246,11 +269,13 @@ def create_app(
             )
         try:
             payload = _agent_post("/ask", {"question": body.question, "history": body.history})
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
+            # Never surface an upstream exception string: it can carry SQL or hostnames.
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"code": "AGENT_ERROR", "message": f"{type(exc).__name__}: {exc}"[:300]},
-            ) from exc
+                detail={"code": "AGENT_ERROR",
+                        "message": "Chưa thể tải kết quả. Bạn thử lại sau nhé."},
+            ) from None
         return payload
 
     static_dir = FilePath(__file__).with_name("static")

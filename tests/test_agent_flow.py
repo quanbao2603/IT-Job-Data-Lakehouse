@@ -82,7 +82,12 @@ class TestAsk(unittest.TestCase):
         })
         with patch("src.agent.agent.build_agent", return_value=stub_agent):
             payload = ask("chào", settings=_settings(api_key="test-key")).as_dict()
-        self.assertEqual(set(payload), {"answer", "sql", "rows", "steps", "provider", "model"})
+            public = ask("chào", settings=_settings(api_key="test-key")).as_public_dict()
+        # The internal view still carries the evidence; the public one must not.
+        self.assertEqual(set(public), {"request_id", "answer_type", "answer_markdown",
+                                      "data_context", "applied_filters", "result", "warnings"})
+        self.assertIn("sql", payload)
+        self.assertNotIn("sql", public)
 
 
 class TestPrompts(unittest.TestCase):
