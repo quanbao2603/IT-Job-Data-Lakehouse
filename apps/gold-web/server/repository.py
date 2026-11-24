@@ -571,12 +571,13 @@ class GoldRepository:
     def company_profile(self, company_key: str, params: FilterParams) -> dict[str, Any] | None:
         """Per-company breakdown so the Companies page can show shape, not just a ranking."""
         where, values = self._where(params)
-        base = f"""
+        # Kept apart so the skills query can add its joins before the WHERE clause.
+        from_sql = """
             FROM gold.v_job_snapshot s
             JOIN gold.dim_job j ON j.job_key = s.job_key
             JOIN gold.dim_company c ON c.company_key = s.company_key
-            WHERE {where} AND c.company_key = %s
         """
+        base = f"{from_sql} WHERE {where} AND c.company_key = %s"
         with self._read_transaction() as (_, cursor):
             context = self._release_context_from_cursor(cursor)
             cursor.execute(f"SELECT c.company_display_name, count(*)::int AS jobs, "
@@ -607,10 +608,10 @@ class GoldRepository:
                 ]
             cursor.execute(
                 f"""SELECT d.skill_name, count(DISTINCT s.unified_job_id)::int AS count
-                    {base}
+                    {from_sql}
                     JOIN gold.v_job_skill f ON f.unified_job_id = s.unified_job_id
                     JOIN gold.dim_skill d ON d.skill_key = f.skill_key
-                    WHERE NOT d.is_unknown
+                    WHERE {where} AND c.company_key = %s AND NOT d.is_unknown
                     GROUP BY 1 ORDER BY count DESC, 1 LIMIT 10""",
                 [*values, company_key],
             )

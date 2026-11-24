@@ -894,7 +894,15 @@ function Companies({ data, onSelect, onPage }: { data: CompaniesResponse; onSele
 
 function Trends({ data }: { data: TrendsResponse }) {
   const weeks = data.weeks
-  const max = Math.max(1, ...weeks.map((w) => w.jobs))
+  // The first crawl week carries every job ever seen, so plotting all 26 weeks flattens the
+  // recent bars into the baseline. A quarter keeps the shape readable; KPIs still use everything.
+  const chartWeeks = weeks.slice(-13)
+  // One bulk-load week (the first crawl) can dwarf every real week and flatten the rest into
+  // the baseline. Cap the scale at the second-largest value and mark the clipped bar, so the
+  // chart stays readable without hiding the outlier.
+  const sorted = [...chartWeeks].map((w) => w.jobs).sort((a, b) => b - a)
+  const outlier = sorted.length > 1 && sorted[0] > sorted[1] * 4 ? sorted[0] : null
+  const max = Math.max(1, outlier ? sorted[1] : sorted[0])
   const lastFour = weeks.slice(-4)
   const avg = lastFour.length ? Math.round(lastFour.reduce((sum, w) => sum + w.jobs, 0) / lastFour.length) : 0
   const latest = weeks[weeks.length - 1]
@@ -916,18 +924,27 @@ function Trends({ data }: { data: TrendsResponse }) {
     <section className="panel">
       <div className="panel-heading">
         <div><h2>Số tin theo tuần đăng</h2><p>Dựa trên ngày đăng của tin đã hợp nhất; tuần có ít tin có thể là tuần ít nguồn được cào</p></div>
-        <span className="muted-badge">{weeks.length} tuần</span>
+        <span className="muted-badge">{chartWeeks.length} tuần gần nhất</span>
       </div>
-      {weeks.length === 0
+      {chartWeeks.length === 0
         ? <p className="muted" style={{ padding: '0 21px 18px' }}>Chưa có ngày đăng tin để dựng xu hướng.</p>
         : <div className="trend-chart" role="img"
-            aria-label={weeks.map((w) => `${formatDay(w.week_start)}: ${w.jobs} tin`).join(', ')}>
-          {weeks.map((week) => <div className="trend-column" key={week.week_start}>
-            <b>{number.format(week.jobs)}</b>
-            <div className="trend-bar" style={{ height: `${Math.max(4, (week.jobs / max) * 100)}%` }} />
-            <span>{formatDay(week.week_start).slice(0, 5)}</span>
-          </div>)}
+            aria-label={chartWeeks.map((w) => `${formatDay(w.week_start)}: ${w.jobs} tin`).join(', ')}>
+          {chartWeeks.map((week) => {
+            const clipped = outlier != null && week.jobs === outlier
+            const ratio = Math.min(week.jobs, max) / max
+            return <div className="trend-column" key={week.week_start}>
+              <b className={clipped ? 'clipped' : undefined}>{number.format(week.jobs)}{clipped ? '▴' : ''}</b>
+              <div className="trend-plot">
+                <div className={`trend-bar${clipped ? ' clipped' : ''}`}
+                  style={{ height: `${Math.max(3, ratio * 100)}%` }}
+                  title={`${formatDay(week.week_start)}: ${number.format(week.jobs)} tin`} />
+              </div>
+              <span>{formatDay(week.week_start).slice(0, 5)}</span>
+            </div>
+          })}
         </div>}
+      {outlier != null && <p className="panel-note">Cột đánh dấu ▴ là tuần nạp dữ liệu đầu tiên ({number.format(outlier)} tin) nên bị cắt bớt chiều cao để các tuần còn lại đọc được; số liệu vẫn là số thật.</p>}
     </section>
 
     <section className="panel">

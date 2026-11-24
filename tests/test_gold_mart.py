@@ -523,15 +523,17 @@ class TestSqlScripts(unittest.TestCase):
         self.assertTrue(all(len(s) > 10 for s in statements))
         self.assertEqual(len([s for s in statements if s.upper().startswith("CREATE SCHEMA")]), 3)
         creates = [s for s in statements if s.upper().startswith("CREATE TABLE")]
-        # 5 dimensions + 7 facts + 4 control + 4 staging.
-        self.assertEqual(len(creates), 20)
+        # 5 dimensions + 7 facts + 1 ad-text table + 4 control + 4 staging.
+        self.assertEqual(len(creates), 21)
         # Match on the created object name only; REFERENCES clauses also mention dim tables.
         names = [re.match(r"CREATE TABLE IF NOT EXISTS ([\w.]+)", s).group(1) for s in creates]
         self.assertEqual(len([n for n in names if n.startswith("gold.dim_")]), 5)
         self.assertEqual(len([n for n in names if n.startswith("gold.fact_")]), 7)
+        # gold.job_detail keeps the ad body out of the dimensions but still in Gold.
+        self.assertIn("gold.job_detail", names)
         self.assertEqual(len([n for n in names if n.startswith("gold_control.")]), 4)
         self.assertEqual(len([n for n in names if n.startswith("gold_staging.")]), 4)
-        self.assertEqual(len(set(names)), 20, "table names must be unique")
+        self.assertEqual(len(set(names)), 21, "table names must be unique")
 
     def test_ddl_encodes_the_business_decisions(self):
         script = (Path(__file__).resolve().parent.parent / "src" / "gold" / "ddl.sql").read_text(encoding="utf-8")

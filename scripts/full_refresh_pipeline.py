@@ -107,6 +107,15 @@ def main(argv: list[str] | None = None) -> int:
         timeout=1800,
     ))
 
+    # The detail page reads ad text from gold.job_detail; it must follow every publish.
+    if results[-1]["exit"] == 0:
+        results.append(run_step(
+            "gold_job_detail",
+            [sys.executable, "scripts/load_job_detail.py", "--gold-release-id", release_id],
+            env,
+            timeout=900,
+        ))
+
     print("\n=== summary ===")
     print(json.dumps(results, indent=1, ensure_ascii=False))
     return 0 if results[-1]["exit"] == 0 else 1

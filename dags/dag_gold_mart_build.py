@@ -138,6 +138,25 @@ def _gold_build(**context: Any) -> Dict[str, Any]:
     return result
 
 
+def _gold_job_detail(**_: Any) -> str:
+    """Copy the representative ad text into gold.job_detail for the release just published.
+
+    dim_job stays lean on purpose; the detail page needs the ad body, and this step keeps the
+    two in sync without widening the daily schema run.
+    """
+    command = [PYTHON, "scripts/load_job_detail.py"]
+    completed = subprocess.run(
+        command, cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=900,
+        env=_PROCESS_ENV,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"gold_job_detail failed with exit {completed.returncode}: "
+            f"{(completed.stderr or completed.stdout)[-500:]}"
+        )
+    return (completed.stdout or "").strip()[-300:]
+
+
 def _gold_summary(**context: Any) -> Dict[str, Any]:
     build = context["ti"].xcom_pull(task_ids="gold_build_and_publish") or {}
     summary = {
@@ -181,9 +200,14 @@ with DAG(
         python_callable=_gold_build,
         trigger_rule=TriggerRule.ALL_SUCCESS,
     )
+    detail = PythonOperator(
+        task_id="gold_job_detail",
+        python_callable=_gold_job_detail,
+        trigger_rule=TriggerRule.ALL_SUCCESS,
+    )
     summary = PythonOperator(
         task_id="gold_pipeline_summary",
         python_callable=_gold_summary,
         trigger_rule=TriggerRule.ALL_SUCCESS,
     )
-    preflight >> build >> summary
+    preflight >> build >> detail >> summary

@@ -675,3 +675,62 @@ input, select { color: var(--text); }
 }
 .example-chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-strong); }
 .example-chip:disabled { opacity: .55; cursor: not-allowed; }
+
+/* ── Xu hướng (trends) ───────────────────────────────────── */
+.trend-chart {
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 8px 21px 20px; min-height: 220px; overflow-x: auto;
+  background-image: linear-gradient(to top, rgba(20,126,115,.10) 1px, transparent 1px);
+  background-size: 100% 25%;
+  background-position: 0 100%;
+}
+.trend-column {
+  flex: 1 1 0; min-width: 34px; display: flex; flex-direction: column;
+  align-items: center; justify-content: flex-end; gap: 6px;
+}
+.trend-plot { width: 100%; height: 148px; display: flex; align-items: flex-end; justify-content: center; }
+.trend-column b.clipped { color: var(--accent); }
+.trend-bar.clipped { background: repeating-linear-gradient(180deg, #5cb8a6 0 6px, #a9d8cd 6px 12px); }
+.trend-column b { font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.trend-column span { font-size: 10px; color: var(--text-3); white-space: nowrap; }
+.trend-bar {
+  flex: 0 0 auto; width: 100%; max-width: 34px; border-radius: 6px 6px 2px 2px;
+  background: linear-gradient(180deg, #5cb8a6, #147e73); min-height: 4px;
+}
+
+/* ── Cấu trúc doanh nghiệp ───────────────────────────────── */
+.company-profile { margin-bottom: 18px; }
+.profile-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 8px 26px; padding: 0 21px 18px;
+}
+.profile-grid h3 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin: 10px 0 2px; }
+.company-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.button.ghost { background: transparent; }
+
+/* ── Nội dung tin đăng trong modal ───────────────────────── */
+.ad-section { border-top: 1px solid var(--border); padding: 12px 0 4px; }
+.ad-section > summary {
+  cursor: pointer; font-weight: 600; font-size: 13px; color: var(--text-1);
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.ad-section > summary::before { content: '▸'; color: var(--accent); font-size: 11px; }
+.ad-section[open] > summary::before { content: '▾'; }
+.ad-section p {
+  margin: 10px 0 0; white-space: pre-wrap; font-size: 13px; line-height: 1.65;
+  color: var(--text-2); max-height: 320px; overflow-y: auto;
+}
+
+/* ── Mobile: bộ lọc 6 ô và bảng Quality 4 cột ─────────────── */
+@media (max-width: 560px) {
+  .filter-bar { grid-template-columns: minmax(0, 1fr); }
+  .filter-bar select, .filter-bar .search-box { grid-column: 1 / -1; width: 100%; }
+  .check-columns { grid-template-columns: 1fr; gap: 3px; padding: 12px 16px; }
+  .check-columns > * { grid-column: 1; }
+  .check-columns > :nth-child(3) { display: none; }
+  .check-columns > :nth-child(4) { justify-self: start; font-weight: 600; }
+  .trend-chart { gap: 5px; padding-left: 12px; padding-right: 12px; }
+  .trend-column { min-width: 26px; }
+  .profile-grid { grid-template-columns: 1fr; padding-left: 16px; padding-right: 16px; }
+  .metric-grid { grid-template-columns: 1fr 1fr; }
+}
