@@ -117,12 +117,52 @@ class TestGoldWebAPI(unittest.TestCase):
         self.assertEqual(payload["summary"]["jobs"], 1)
         self.assertEqual(payload["meta"]["mode"], "live")
 
-    def test_assistant_is_explicitly_disabled(self):
+    def test_scope_filter_reaches_the_repository(self):
+        """scope=recent must be a repository-level filter, not a cosmetic query string."""
+        from server.repository import GoldRepository
+
+        from server.schemas import FilterParams
+        all_params = FilterParams(scope="all")
+        recent_params = FilterParams(scope="recent")
+        self.assertEqual(all_params.scope, "all")
+        self.assertEqual(recent_params.scope, "recent")
+
+        where_all, values_all = GoldRepository._where(all_params)
+        where_recent, values_recent = GoldRepository._where(recent_params)
+        self.assertNotIn("last_seen_at", where_all)
+        self.assertIn("last_seen_at >=", where_recent)
+        self.assertIn("14 days", where_recent)
+        self.assertEqual(values_all, values_recent)
+
+    def test_scope_rejects_unknown_value(self):
+        response = self.client.get("/api/dashboard?scope=everything")
+        self.assertEqual(response.status_code, 422)
+
+    def test_assistant_status_reports_a_known_state(self):
+        """The endpoint must always answer with a state, never a bare error.
+
+        Whether the agent service is running depends on the machine, so the contract is the
+        payload shape and the closed set of states, not one particular state.
+        """
         response = self.client.get("/api/assistant/status")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
+        self.assertIn("enabled", payload)
+        self.assertIn(payload["status"], {"ready", "offline", "not_configured"})
+        self.assertIsInstance(payload["message"], str)
+        self.assertTrue(payload["examples"])
+
+    def test_assistant_reports_offline_when_the_service_is_down(self):
+        from server import app as web_app
+
+        original = web_app._agent_health
+        web_app._agent_health = lambda: None
+        try:
+            payload = self.client.get("/api/assistant/status").json()
+        finally:
+            web_app._agent_health = original
         self.assertFalse(payload["enabled"])
-        self.assertEqual(payload["status"], "not_configured")
+        self.assertEqual(payload["status"], "offline")
 
     def test_jobs_rejects_invalid_page_size(self):
         response = self.client.get("/api/jobs?page_size=51")

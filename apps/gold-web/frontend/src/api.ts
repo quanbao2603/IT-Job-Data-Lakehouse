@@ -23,6 +23,7 @@ export type Filters = {
   page?: number
   page_size?: number
   sort?: 'recent' | 'salary' | 'title'
+  scope?: 'all' | 'recent'
   expected_release_id?: string
 }
 
@@ -44,6 +45,7 @@ export type Job = {
   source_count: number
   observation_count?: number
   last_seen_at: string | null
+  days_since_last_seen: number | null
   snapshot_cutoff_at?: string
   skills: { skill_code: string; skill_name: string }[]
   platforms: string[]

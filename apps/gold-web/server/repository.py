@@ -11,6 +11,10 @@ import psycopg2
 from .config import Settings, get_settings
 from .schemas import FilterParams
 
+# Same window the Gold contract uses for evidence (src/gold/contract.py). Kept as a plain
+# constant here because the web tier must not import the ETL package.
+EVIDENCE_WINDOW_DAYS = 14
+
 
 class GoldWebError(RuntimeError):
     code = "GOLD_UNAVAILABLE"
@@ -192,6 +196,10 @@ class GoldRepository:
             if value:
                 clauses.append(f"{column} = %s")
                 values.append(value)
+        if params.scope == "recent":
+            # Default is "everything the lakehouse knows" (maximum data). The recent scope
+            # is opt-in and uses the same window the Gold contract declares as evidence.
+            clauses.append(f"{snapshot_alias}.last_seen_at >= NOW() - INTERVAL '{EVIDENCE_WINDOW_DAYS} days'")
         if params.skill:
             clauses.append(
                 f"EXISTS (SELECT 1 FROM gold.v_job_skill sf "
@@ -362,7 +370,8 @@ class GoldRepository:
                        j.job_level, j.work_mode, s.entity_status,
                        s.canonical_salary_min_vnd, s.canonical_salary_max_vnd,
                        s.salary_midpoint_vnd, s.salary_sample_flag,
-                       s.source_count, s.last_seen_at, s.job_key
+                       s.source_count, s.last_seen_at, s.job_key,
+                       EXTRACT(DAY FROM NOW() - s.last_seen_at)::int AS days_since_last_seen
                 {from_sql}
                 ORDER BY {order_by}
                 LIMIT %s OFFSET %s

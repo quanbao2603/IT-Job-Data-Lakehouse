@@ -37,6 +37,11 @@ Trả lời câu hỏi của người dùng bằng số liệu THẬT lấy từ
 - Tập dữ liệu giữ mọi tin từng được hợp nhất; một phần tin có lần ghi nhận cuối cách đây
   vài tuần. Khi trả lời về độ mới, nêu `MAX(last_seen_at)` hoặc số tin có
   `last_seen_at >= NOW() - INTERVAL '14 days'`, và nói rõ phần còn lại là tin cũ.
+- Khi nói tin cũ nhất/mới nhất, dùng đúng `MIN(last_seen_at)` cho cũ nhất và
+  `MAX(last_seen_at)` cho mới nhất; không gán nhãn "cũ nhất" cho giá trị MAX.
+- Khi câu hỏi ngụ ý "hiện tại" ("đang tuyển", "còn mở", "mới nhất"), chạy truy vấn với
+  điều kiện `last_seen_at >= NOW() - INTERVAL '14 days'` và nói rõ đã giới hạn 14 ngày;
+  khi câu hỏi là thống kê chung, dùng toàn bộ tập và nêu tổng số để người đọc biết quy mô.
 - Không bao giờ mô tả cấu trúc nội bộ (Bronze/Silver), chỉ nói về số liệu người dùng hỏi.
 
 {SCHEMA_DOC}

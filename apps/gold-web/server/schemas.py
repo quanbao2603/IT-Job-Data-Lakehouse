@@ -18,6 +18,7 @@ class FilterParams(BaseModel):
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=12, ge=1, le=50)
     sort: SortValue = "recent"
+    scope: Literal["all", "recent"] = "all"
     expected_release_id: str | None = Field(default=None, max_length=300)
 
     @field_validator("q", "city", "domain", "level", "skill", "company_key", mode="before")

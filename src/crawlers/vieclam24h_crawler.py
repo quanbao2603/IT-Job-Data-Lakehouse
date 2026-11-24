@@ -47,8 +47,12 @@ class Vieclam24hCrawler(BaseCrawler):
     BASE_URL = "https://vieclam24h.vn"
     OCCUPATION_IDS = (7, 8)  # 7 = IT Phần cứng - Mạng, 8 = IT Phần mềm
     LIST_BASE = "https://vieclam24h.vn/tim-kiem-viec-lam-nhanh?occupation_ids[]=7&occupation_ids[]=8"
-    REQUEST_DELAY_MIN = 1.0
-    REQUEST_DELAY_MAX = 1.8
+    # The listing endpoint starts returning 403 after ~5 rapid pages, so both the page gap
+    # and the detail gap are pacing knobs, not cosmetics. Defaults are deliberately slow.
+    REQUEST_DELAY_MIN = float(os.getenv("VSL_DETAIL_DELAY_MIN", "4.0"))
+    REQUEST_DELAY_MAX = float(os.getenv("VSL_DETAIL_DELAY_MAX", "6.5"))
+    PAGE_DELAY_MIN = float(os.getenv("VSL_PAGE_DELAY_MIN", "8.0"))
+    PAGE_DELAY_MAX = float(os.getenv("VSL_PAGE_DELAY_MAX", "12.0"))
 
     EXPERIENCE_MAP = {
         0: "Không yêu cầu",
@@ -62,8 +66,9 @@ class Vieclam24hCrawler(BaseCrawler):
     }
     WORKING_METHOD_MAP = {1: "Toàn thời gian", 2: "Bán thời gian", 3: "Thực tập", 4: "Thời vụ"}
 
-    def __init__(self, **kwargs):
+    def __init__(self, skip_detail: bool = False, **kwargs):
         super().__init__(source_name="vieclam24h", **kwargs)
+        self.skip_detail = skip_detail or os.getenv("VSL_SKIP_DETAIL", "").lower() in {"1", "true", "yes"}
         self.cookie = self._load_cookie()
         self.session = self._create_session()
 
@@ -530,6 +535,11 @@ class Vieclam24hCrawler(BaseCrawler):
                         break
 
                 self.heartbeat()
+                if getattr(self, "skip_detail", False):
+                    # The search JSON already carries employer, place, salary and level, so a
+                    # full 513-job refresh needs 18 paced requests instead of 531.
+                    yield self._card_fallback_payload(card)
+                    continue
                 detail_html = self._make_request(card["job_url"])
                 if detail_html:
                     try:
@@ -545,7 +555,7 @@ class Vieclam24hCrawler(BaseCrawler):
 
             if watermark_hit:
                 break
-            time.sleep(random.uniform(0.8, 1.2))
+            time.sleep(random.uniform(self.PAGE_DELAY_MIN, self.PAGE_DELAY_MAX))
 
     @staticmethod
     def _yield_wrapper_guard(card: Dict[str, Any], watermark_date: str) -> bool:
@@ -590,9 +600,11 @@ class Vieclam24hCrawler(BaseCrawler):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Bot cào Vieclam24h.vn chuẩn Tầng Bronze 2.0 (ma trận IT: Phần cứng-Mạng + Phần mềm)")
     parser.add_argument("--mode", choices=["full", "incremental"], default="incremental", help="Chế độ cào")
+    parser.add_argument("--skip-detail", action="store_true",
+                        help="Chỉ dùng dữ liệu thẻ tin trong JSON tìm kiếm, không tải trang chi tiết")
     parser.add_argument("--max-pages", type=int, default=1, help="Số trang quét tối đa (30 tin/trang. Mặc định: 1)")
     args = parser.parse_args()
 
-    crawler = Vieclam24hCrawler()
+    crawler = Vieclam24hCrawler(skip_detail=getattr(args, "skip_detail", False))
     result = crawler.run(mode=args.mode, max_pages=args.max_pages)
     raise SystemExit(emit_cli_result(result))

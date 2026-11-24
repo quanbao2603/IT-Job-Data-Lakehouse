@@ -445,6 +445,10 @@ function FilterBar({ filters, options, updateFilter, clearOne, reset, chips }: {
         {filters.level && !(options?.levels ?? []).some((item) => item.value === filters.level) && <option value={filters.level}>{bucketLabel(filters.level)}</option>}
         {(options?.levels ?? []).map((item) => <option key={item.value} value={item.value}>{bucketLabel(item.label)} ({number.format(item.count)})</option>)}
       </select>
+      <select value={filters.scope ?? 'all'} onChange={(e) => updateFilter('scope', e.target.value === 'all' ? '' : e.target.value)} aria-label="Phạm vi cập nhật">
+        <option value="all">Mọi thời điểm</option>
+        <option value="recent">Cập nhật 14 ngày</option>
+      </select>
       <select value={filters.skill ?? ''} onChange={(e) => updateFilter('skill', e.target.value)} aria-label="Lọc theo kỹ năng">
         <option value="">Mọi kỹ năng</option>
         {filters.skill && !(options?.skills ?? []).some((item) => item.value === filters.skill) && <option value={filters.skill}>{filters.skill}</option>}
@@ -650,6 +654,9 @@ function Jobs({ data, sort, onSort, onSelect, onExport, onPage }: {
           <span className="initials" aria-hidden>{initials(job.company_display_name)}</span>
           <div className="job-main">
             <span className="job-domain">{bucketLabel(display(job.job_domain))}</span>
+            {job.days_since_last_seen != null && job.days_since_last_seen > 14 && (
+              <span className="source-tag" title="Lần ghi nhận cuối đã quá 14 ngày">cũ {job.days_since_last_seen} ngày</span>
+            )}
             <h2>{job.canonical_title}</h2>
             <p className="company-name">{job.company_display_name}</p>
             <div className="job-meta">
