@@ -238,6 +238,27 @@ class TestVieclam24hFetchJobs(unittest.TestCase):
         self.assertEqual(len(results), 3)
         self.assertTrue(all(r["platform"] == "vieclam24h" for r in results))
 
+    def test_page_window_fetches_only_the_requested_slice(self):
+        """The sweep crawls a few pages per run, so the loop must start where it is told."""
+        requested = []
+
+        def fn(url, **kwargs):
+            requested.append(url)
+            return self.list_html
+
+        self.crawler.page_start = 4
+        self.crawler.page_gap = 0
+        with patch.object(self.crawler, "_make_request", side_effect=fn), \
+             patch("src.crawlers.vieclam24h_crawler.time.sleep"):
+            results = list(self.crawler.fetch_jobs(mode="full", max_pages=3))
+        listing = [url for url in requested if "tim-kiem-viec-lam-nhanh" in url]
+        self.assertEqual(len(listing), 3)
+        self.assertIn("page=4", listing[0])
+        self.assertIn("page=5", listing[1])
+        self.assertIn("page=6", listing[2])
+        # One page of cards per page request; the window must not fabricate page 1.
+        self.assertEqual(len(results), 9)
+
     def test_incremental_stops_on_last_record_id(self):
         items = self.crawler._parse_listing_page(self.list_html)["items"]
         cards = [self.crawler._normalize_job_card(i) for i in items]

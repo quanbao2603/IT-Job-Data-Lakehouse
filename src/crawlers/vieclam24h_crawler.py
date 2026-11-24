@@ -66,8 +66,12 @@ class Vieclam24hCrawler(BaseCrawler):
     }
     WORKING_METHOD_MAP = {1: "Toàn thời gian", 2: "Bán thời gian", 3: "Thực tập", 4: "Thời vụ"}
 
-    def __init__(self, skip_detail: bool = False, **kwargs):
+    def __init__(self, skip_detail: bool = False, page_start: int = 1,
+                 page_gap: float | None = None, **kwargs):
         super().__init__(source_name="vieclam24h", **kwargs)
+        # WAF-friendly window: fetch a few pages per run instead of the whole listing in one burst.
+        self.page_start = max(1, int(page_start))
+        self.page_gap = page_gap
         self.skip_detail = skip_detail or os.getenv("VSL_SKIP_DETAIL", "").lower() in {"1", "true", "yes"}
         self.cookie = self._load_cookie()
         self.session = self._create_session()
@@ -482,9 +486,12 @@ class Vieclam24hCrawler(BaseCrawler):
         watermark_date = watermark_ts[:10] if watermark_ts else ""
 
         print(f"[*] Bắt đầu quét Vieclam24h [ma trận IT: occupation_ids={'+'.join(map(str, self.OCCUPATION_IDS))}] "
-              f"- Chế độ: {mode_label} (Tối đa {max_pages} trang)...")
+              f"- Chế độ: {mode_label} (Tối đa {max_pages} trang, bắt đầu từ trang "
+              f"{max(1, int(getattr(self, 'page_start', 1)))})...")
 
-        for page in range(1, max_pages + 1):
+        first_page = max(1, int(getattr(self, "page_start", 1)))
+        last_page = first_page + max(0, max_pages - 1)
+        for page in range(first_page, last_page + 1):
             if watermark_hit:
                 break
 
@@ -499,7 +506,7 @@ class Vieclam24hCrawler(BaseCrawler):
             parsed = self._parse_listing_page(html)
             raw_items = parsed["items"]
 
-            if page == 1:
+            if page == first_page:
                 if parsed["total_items"]:
                     print(f"      📊 VIECLAM24H XÁC NHẬN: {parsed['total_items']} việc làm trong ma trận IT "
                           f"({parsed['total_pages']} trang × 30 tin)")
@@ -507,7 +514,7 @@ class Vieclam24hCrawler(BaseCrawler):
 
             cards = [self._normalize_job_card(it) for it in raw_items if it.get("id")]
             print(f"      [✓] Trang {page} phát hiện {len(cards)} tin trong ma trận IT.")
-            if page == 1:
+            if page == first_page:
                 require_listing_data(
                     getattr(self, "source_name", "vieclam24h"),
                     len(cards),
@@ -555,7 +562,8 @@ class Vieclam24hCrawler(BaseCrawler):
 
             if watermark_hit:
                 break
-            time.sleep(random.uniform(self.PAGE_DELAY_MIN, self.PAGE_DELAY_MAX))
+            gap = getattr(self, "page_gap", None)
+            time.sleep(gap if gap else random.uniform(self.PAGE_DELAY_MIN, self.PAGE_DELAY_MAX))
 
     @staticmethod
     def _yield_wrapper_guard(card: Dict[str, Any], watermark_date: str) -> bool:
@@ -600,11 +608,19 @@ class Vieclam24hCrawler(BaseCrawler):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Bot cào Vieclam24h.vn chuẩn Tầng Bronze 2.0 (ma trận IT: Phần cứng-Mạng + Phần mềm)")
     parser.add_argument("--mode", choices=["full", "incremental"], default="incremental", help="Chế độ cào")
+    parser.add_argument("--page-start", type=int, default=1,
+                        help="Trang bắt đầu (dùng để chia nhỏ lượt cào, tránh WAF)")
+    parser.add_argument("--page-gap", type=float, default=None,
+                        help="Số giây nghỉ giữa hai trang (mặc định theo VSL_PAGE_DELAY_*)")
     parser.add_argument("--skip-detail", action="store_true",
                         help="Chỉ dùng dữ liệu thẻ tin trong JSON tìm kiếm, không tải trang chi tiết")
     parser.add_argument("--max-pages", type=int, default=1, help="Số trang quét tối đa (30 tin/trang. Mặc định: 1)")
     args = parser.parse_args()
 
-    crawler = Vieclam24hCrawler(skip_detail=getattr(args, "skip_detail", False))
+    crawler = Vieclam24hCrawler(
+        skip_detail=getattr(args, "skip_detail", False),
+        page_start=getattr(args, "page_start", 1),
+        page_gap=getattr(args, "page_gap", None),
+    )
     result = crawler.run(mode=args.mode, max_pages=args.max_pages)
     raise SystemExit(emit_cli_result(result))
