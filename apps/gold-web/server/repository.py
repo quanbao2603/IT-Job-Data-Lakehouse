@@ -274,6 +274,8 @@ class GoldRepository:
                        percentile_cont(0.5) WITHIN GROUP (ORDER BY s.salary_midpoint_vnd)
                            FILTER (WHERE s.salary_sample_flag) AS salary_median,
                        COUNT(*) FILTER (WHERE j.city_bucket = 'UNKNOWN')::int AS missing_city,
+                       COUNT(*) FILTER (WHERE s.last_seen_at >= NOW() - INTERVAL '14 days')::int AS recent_jobs,
+                       MIN(s.last_seen_at)::date AS oldest_last_seen,
                        MAX(s.last_seen_at) AS last_seen_at
                 {base}
                 """,
@@ -282,6 +284,10 @@ class GoldRepository:
             summary = dict(zip((item[0] for item in cursor.description), cursor.fetchone()))
             summary["salary_median"] = float(summary["salary_median"]) if summary["salary_median"] is not None else None
             summary["last_seen_at"] = self._text(summary.get("last_seen_at"))
+            # The cohort keeps every job the lakehouse ever unified. Say how much of it was
+            # actually re-observed lately, so nobody reads the headline as "all hiring now".
+            summary["recent_jobs"] = int(summary.get("recent_jobs") or 0)
+            summary["oldest_last_seen"] = self._text(summary.get("oldest_last_seen"))
             cursor.execute(
                 f"""
                 SELECT COUNT(DISTINCT sf.skill_key)::int

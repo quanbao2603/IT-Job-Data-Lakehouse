@@ -52,7 +52,7 @@ export type Job = {
 }
 export type DashboardResponse = {
   meta: Meta
-  summary: { jobs: number; companies: number; skills: number; salary_samples: number; salary_median: number | null; missing_city: number; last_seen_at: string | null }
+  summary: { jobs: number; companies: number; skills: number; salary_samples: number; salary_median: number | null; missing_city: number; recent_jobs: number; oldest_last_seen: string | null; last_seen_at: string | null }
   domains: Option[]; cities: Option[]; levels: Option[]; companies: Option[]; skills: Option[]; platforms: Option[]
 }
 export type JobsResponse = { meta: Meta; items: Job[]; total: number; page: number; page_size: number }

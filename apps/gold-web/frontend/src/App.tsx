@@ -58,6 +58,48 @@ function formatDay(value: string | null | undefined) {
 function bucketLabel(value: string) {
   return value === 'UNKNOWN' ? 'Chưa xác định' : value
 }
+const CHECK_LABELS: Record<string, string> = {
+  'Grain PK unique on all facts': 'Khóa chính của mọi bảng fact là duy nhất',
+  'Facts reference an existing dim_job version': 'Mọi fact đều tham chiếu một phiên bản dim_job tồn tại',
+  'Every company_key exists in dim_company': 'Mọi mã công ty đều có trong danh mục công ty',
+  'Every skill_key exists in dim_skill': 'Mọi mã kỹ năng đều có trong danh mục kỹ năng',
+  'Every platform_key exists in dim_platform': 'Mọi mã nền tảng đều có trong danh mục nền tảng',
+  'Every date_key exists in dim_date': 'Mọi khóa ngày đều có trong danh mục ngày',
+  'Snapshot rows equal effective entities': 'Số dòng snapshot bằng số thực thể hiệu lực',
+  'salary_min <= salary_max': 'Lương tối thiểu không vượt lương tối đa',
+  'dim_job version matches the snapshot day': 'Phiên bản dim_job khớp ngày snapshot',
+  'No observation newer than cutoff': 'Không có quan sát nào mới hơn thời điểm cắt',
+  'No REVIEW_REQUIRED/UNMATCHED link carries a job': 'Link cần duyệt hoặc chưa khớp không mang tin',
+  'Exactly one current version per job': 'Mỗi tin chỉ có đúng một phiên bản hiện hành',
+  'Market groups sum to snapshot cohort': 'Nhóm thị trường cộng lại bằng tổng cohort',
+  'salary_sample_count <= observed_job_count': 'Số mẫu lương không vượt số tin quan sát',
+  'Company groups sum to snapshot cohort': 'Nhóm công ty cộng lại bằng tổng cohort',
+  'Skill pairs ordered, no self pair': 'Cặp kỹ năng có thứ tự, không tự ghép chính nó',
+  'co_mentioned <= jobs having each skill': 'Số đồng xuất hiện không vượt số tin có kỹ năng',
+  'Change event PK unique': 'Khóa chính của biến cố thay đổi là duy nhất',
+  'Baseline observation is not a change': 'Quan sát gốc không bị tính là biến cố thay đổi',
+  'Every row carries gold and silver release ids': 'Mỗi dòng đều mang mã release gold và silver',
+  'job_domain null rate within threshold': 'Tỷ lệ thiếu chuyên môn trong ngưỡng cho phép',
+  'Unmapped skill codes reported': 'Mã kỹ năng chưa ánh xạ được báo cáo đầy đủ',
+  'representative_fallback rate': 'Tỷ lệ dùng dữ liệu đại diện trong ngưỡng cho phép',
+  'Job-skill-day grain not inflated by recrawl': 'Dữ liệu không bị nhân bản khi cào lại',
+  'SUM(open_job_count) <= SUM(job_count)': 'Số tin đang mở không vượt tổng số tin',
+  'Non-open statuses never flagged open': 'Trạng thái không mở không bị đánh dấu đang mở',
+  'open_job_count source is entity_status': 'Trạng thái đang mở lấy từ entity_status',
+  'open_job_count matches the D-G05 status set': 'Trạng thái đang mở khớp bộ trạng thái D-G05',
+  'Parquet entities and SQLite registry agree': 'Thực thể Parquet và registry SQLite khớp nhau',
+  'Description drift within 1% of entities': 'Mô tả công việc lệch không quá 1% số thực thể',
+  'job_domain UNKNOWN share': 'Tỷ lệ chưa xác định chuyên môn trong ngưỡng cho phép',
+  'City axis limited to five explicit groups': 'Trục địa điểm chỉ gồm năm nhóm xác định',
+  'No duplicate effective entity': 'Không có thực thể hiệu lực bị trùng',
+}
+
+function checkLabel(name: string) {
+  // Check names are English identifiers from the DQ registry; the page is Vietnamese.
+  const label = CHECK_LABELS[name] ?? name
+  return label.replace(/\bUNKNOWN\b/gi, 'chưa xác định').replace(/\bnull\b/gi, 'chưa có dữ liệu')
+}
+
 function display(value: string | null | undefined) {
   return value || 'Chưa xác định'
 }
@@ -390,18 +432,18 @@ function FilterBar({ filters, options, updateFilter, clearOne, reset, chips }: {
       </div>
       <select value={filters.city ?? ''} onChange={(e) => updateFilter('city', e.target.value)} aria-label="Lọc theo địa điểm">
         <option value="">Mọi địa điểm</option>
-        {filters.city && !(options?.cities ?? []).some((item) => item.value === filters.city) && <option value={filters.city}>{filters.city}</option>}
-        {(options?.cities ?? []).map((item) => <option key={item.value} value={item.value}>{item.label} ({number.format(item.count)})</option>)}
+        {filters.city && !(options?.cities ?? []).some((item) => item.value === filters.city) && <option value={filters.city}>{bucketLabel(filters.city)}</option>}
+        {(options?.cities ?? []).map((item) => <option key={item.value} value={item.value}>{bucketLabel(item.label)} ({number.format(item.count)})</option>)}
       </select>
       <select value={filters.domain ?? ''} onChange={(e) => updateFilter('domain', e.target.value)} aria-label="Lọc theo chuyên môn">
         <option value="">Mọi chuyên môn</option>
-        {filters.domain && !(options?.domains ?? []).some((item) => item.value === filters.domain) && <option value={filters.domain}>{filters.domain}</option>}
-        {(options?.domains ?? []).map((item) => <option key={item.value} value={item.value}>{item.label} ({number.format(item.count)})</option>)}
+        {filters.domain && !(options?.domains ?? []).some((item) => item.value === filters.domain) && <option value={filters.domain}>{bucketLabel(filters.domain)}</option>}
+        {(options?.domains ?? []).map((item) => <option key={item.value} value={item.value}>{bucketLabel(item.label)} ({number.format(item.count)})</option>)}
       </select>
       <select value={filters.level ?? ''} onChange={(e) => updateFilter('level', e.target.value)} aria-label="Lọc theo cấp bậc">
         <option value="">Mọi cấp bậc</option>
-        {filters.level && !(options?.levels ?? []).some((item) => item.value === filters.level) && <option value={filters.level}>{filters.level}</option>}
-        {(options?.levels ?? []).map((item) => <option key={item.value} value={item.value}>{item.label} ({number.format(item.count)})</option>)}
+        {filters.level && !(options?.levels ?? []).some((item) => item.value === filters.level) && <option value={filters.level}>{bucketLabel(filters.level)}</option>}
+        {(options?.levels ?? []).map((item) => <option key={item.value} value={item.value}>{bucketLabel(item.label)} ({number.format(item.count)})</option>)}
       </select>
       <select value={filters.skill ?? ''} onChange={(e) => updateFilter('skill', e.target.value)} aria-label="Lọc theo kỹ năng">
         <option value="">Mọi kỹ năng</option>
@@ -432,6 +474,12 @@ function Overview({ data, onCompany, onSkill }: { data: DashboardResponse; onCom
     <div className="metric-grid">
       <Metric icon={<BriefcaseBusiness size={18} aria-hidden />} tone="green" label="Tin hợp nhất được quan sát" value={number.format(data.summary.jobs)} note="Theo dữ liệu Gold" />
       <Metric icon={<Building2 size={18} aria-hidden />} tone="blue" label="Doanh nghiệp" value={number.format(data.summary.companies)} note="Không tính nhóm chưa xác định" />
+      {data.summary.recent_jobs < data.summary.jobs && (
+        <p className="panel-note" style={{ gridColumn: '1 / -1' }}>
+          {number.format(data.summary.recent_jobs)} tin được ghi nhận trong 14 ngày gần nhất;
+          {' '}{number.format(data.summary.jobs - data.summary.recent_jobs)} tin cũ hơn (lần ghi nhận sớm nhất {formatDay(data.summary.oldest_last_seen)}) vẫn nằm trong tập dữ liệu.
+        </p>
+      )}
       <Metric icon={<Sparkles size={18} aria-hidden />} tone="purple" label="Kỹ năng xuất hiện" value={number.format(data.summary.skills)} note="Skill hợp lệ trong cohort" />
       <Metric
         icon={<Coins size={18} aria-hidden />}
@@ -759,7 +807,7 @@ function Quality({ data }: { data: QualityResponse }) {
         {data.checks.length === 0 && <p className="muted" style={{ padding: '0 21px 18px' }}>Chưa có bản ghi kiểm tra chất lượng cho release này.</p>}
         {data.checks.map((check) => <div className="check-row check-columns" key={check.check_code}>
           <span className={check.passed ? 'check-ok' : 'check-fail'}>{check.passed ? 'Đạt' : 'Chưa đạt'}</span>
-          <span><b>{check.check_code}</b><small>{check.check_name}</small></span>
+          <span><b>{check.check_code}</b><small>{checkLabel(check.check_name)}</small></span>
           <span>{check.severity}</span>
           <span className="num">{check.actual}</span>
         </div>)}
