@@ -42,6 +42,7 @@ class AgentSettings:
     statement_timeout_ms: int
     max_agent_steps: int
     allow_openai: bool
+    base_url: str = ""
 
     @property
     def configured(self) -> bool:
@@ -57,6 +58,7 @@ def get_settings() -> AgentSettings:
         # Prefer whichever provider actually has a key, otherwise Gemini (free tier).
         provider = "openai" if (openai_key and not gemini_key) else "gemini"
     default_model = "gemini-2.0-flash" if provider == "gemini" else "gpt-4o-mini"
+    base_url = os.getenv("AGENT_LLM_BASE_URL", "").strip()
     return AgentSettings(
         provider=provider,
         model=os.getenv("AGENT_LLM_MODEL", default_model).strip(),
@@ -65,4 +67,5 @@ def get_settings() -> AgentSettings:
         statement_timeout_ms=max(int(os.getenv("AGENT_SQL_TIMEOUT_MS", "8000")), 500),
         max_agent_steps=max(int(os.getenv("AGENT_MAX_STEPS", "6")), 1),
         allow_openai=bool(openai_key),
+        base_url=base_url,
     )

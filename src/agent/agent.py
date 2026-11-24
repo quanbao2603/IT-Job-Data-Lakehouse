@@ -56,7 +56,12 @@ def build_model(settings: AgentSettings) -> Any:
         )
     from langchain_openai import ChatOpenAI
 
-    return ChatOpenAI(model=settings.model, api_key=settings.api_key, temperature=0, max_retries=2)
+    # An OpenAI-compatible relay (for example a self-hosted gateway) is supported by
+    # pointing AGENT_LLM_BASE_URL at its /v1 endpoint.
+    kwargs = {"model": settings.model, "api_key": settings.api_key, "temperature": 0, "max_retries": 2}
+    if settings.base_url:
+        kwargs["base_url"] = settings.base_url
+    return ChatOpenAI(**kwargs)
 
 
 def build_agent(settings: AgentSettings | None = None, *, snapshot_date: str | None = None) -> Any:
