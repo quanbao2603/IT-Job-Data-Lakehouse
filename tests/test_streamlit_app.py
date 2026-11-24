@@ -46,7 +46,8 @@ class TestStreamlitApp(unittest.TestCase):
 
     def test_dashboard_sections_present(self):
         sections = [s.value for s in self.app.subheader]
-        for expected in ("Theo chuyên môn", "Theo địa điểm", "Theo cấp bậc", "Kỹ năng phổ biến", "Nền tảng"):
+        for expected in ("Theo chuyên môn", "Theo địa điểm", "Theo cấp bậc", "Kỹ năng phổ biến",
+                         "Lương đăng tuyển", "Công ty tuyển dụng nhiều nhất", "Nền tảng"):
             self.assertIn(expected, sections)
 
     def test_chat_tab_states_the_configuration_it_needs(self):

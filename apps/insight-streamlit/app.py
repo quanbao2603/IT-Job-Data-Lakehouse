@@ -47,6 +47,61 @@ def load_dashboard() -> dict:
     return get_json(f"{WEB_API}/api/dashboard")
 
 
+@st.cache_data(ttl=300)
+def load_salary_distribution() -> pd.DataFrame:
+    """Salary histogram straight from Gold through the guarded read-only tool."""
+    from src.agent.tools import run_query
+
+    sql = """
+        SELECT width_bucket(salary_midpoint_vnd, 0, 60000000, 12) AS bucket,
+               COUNT(*) AS jobs,
+               MIN(salary_midpoint_vnd) AS low,
+               MAX(salary_midpoint_vnd) AS high
+        FROM gold.v_job_snapshot
+        WHERE salary_sample_flag
+        GROUP BY 1 ORDER BY 1
+    """
+    result = run_query(sql, max_rows=20)
+    if result.error:
+        raise RuntimeError(result.error)
+    rows = [row for row in result.rows if row.get("jobs")]
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+    frame["Khoảng lương (triệu)"] = frame.apply(
+        lambda row: f"{(row['low'] or 0) / 1_000_000:.0f}–{(row['high'] or 0) / 1_000_000:.0f}", axis=1
+    )
+    return frame[["Khoảng lương (triệu)", "jobs"]].rename(columns={"jobs": "Số tin"})
+
+
+@st.cache_data(ttl=300)
+def load_salary_by_group(group: str) -> pd.DataFrame:
+    """Median salary by job_domain or job_level, with the sample count behind it."""
+    from src.agent.tools import run_query
+
+    column = "j.job_domain" if group == "domain" else "j.job_level"
+    sql = f"""
+        SELECT COALESCE({column}, 'UNKNOWN') AS nhom,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY s.salary_midpoint_vnd) AS median_vnd,
+               COUNT(*) AS samples
+        FROM gold.v_job_snapshot s
+        JOIN gold.v_dim_job_current j ON j.job_key = s.job_key
+        WHERE s.salary_sample_flag
+        GROUP BY 1
+        HAVING COUNT(*) >= 20
+        ORDER BY median_vnd DESC
+    """
+    result = run_query(sql, max_rows=20)
+    if result.error:
+        raise RuntimeError(result.error)
+    frame = pd.DataFrame(result.rows)
+    if frame.empty:
+        return frame
+    frame["Nhóm"] = frame["nhom"].replace({None: "Chưa xác định", "UNKNOWN": "Chưa xác định"})
+    frame["Trung vị (triệu)"] = (frame["median_vnd"].astype(float) / 1_000_000).round(1)
+    return frame[["Nhóm", "Trung vị (triệu)", "samples"]].rename(columns={"samples": "Số mẫu"})
+
+
 @st.cache_data(ttl=60)
 def load_agent_health() -> dict:
     try:
@@ -101,6 +156,29 @@ def page_overview() -> None:
         frame = pd.DataFrame([{"Kỹ năng": r.get("label") or r["value"], "Số tin": r["count"]}
                               for r in data["skills"][:12]])
         st.bar_chart(frame.set_index("Kỹ năng"), height=320)
+
+    st.subheader("Lương đăng tuyển")
+    salary_left, salary_right = st.columns(2)
+    with salary_left:
+        try:
+            distribution = load_salary_distribution()
+            if distribution.empty:
+                st.info("Chưa có mẫu lương hợp lệ.")
+            else:
+                st.caption("Phân bố tin theo khoảng lương (triệu VND)")
+                st.bar_chart(distribution.set_index("Khoảng lương (triệu)"), height=300, width='stretch')
+        except RuntimeError as exc:
+            st.warning(f"Không tải được phân bố lương: {exc}")
+    with salary_right:
+        try:
+            by_domain = load_salary_by_group("domain")
+            if by_domain.empty:
+                st.info("Chưa đủ mẫu để so sánh theo chuyên môn.")
+            else:
+                st.caption("Trung vị lương theo chuyên môn (nhóm ≥ 20 mẫu)")
+                st.bar_chart(by_domain.set_index("Nhóm")["Trung vị (triệu)"], height=300, width='stretch')
+        except RuntimeError as exc:
+            st.warning(f"Không tải được lương theo chuyên môn: {exc}")
 
     st.subheader("Công ty tuyển dụng nhiều nhất")
     frame = pd.DataFrame([{"Công ty": r["label"], "Số tin": r["count"]} for r in data["companies"][:12]])
