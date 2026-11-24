@@ -11,13 +11,51 @@ from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+import json
+import os
+import urllib.error
+import urllib.request
+
 from .config import Settings, get_settings
+from .schemas import AskBody
 from .repository import GoldRepository, GoldWebError, GoldNotReady
 from .schemas import FilterParams
 
 
 PUBLIC_SCOPE = "nguồn cung tin hệ thống quan sát được"
 SALARY_DEFINITION = "Trung điểm khoảng lương VND trên các tin có đủ min/max hợp lệ"
+
+
+ASSISTANT_EXAMPLES = [
+    "Lương trung vị của kỹ sư dữ liệu là bao nhiêu?",
+    "Top 5 công ty tuyển nhiều tin nhất hiện tại?",
+    "Kỹ năng nào xuất hiện nhiều nhất trong nhóm An ninh mạng?",
+    "So sánh số tin giữa Hà Nội và Hồ Chí Minh",
+]
+
+
+def _agent_base_url() -> str:
+    return os.getenv("AGENT_API_URL", "http://127.0.0.1:8021").rstrip("/")
+
+
+def _agent_health(timeout: float = 3.0) -> dict[str, Any] | None:
+    """Return the agent /health payload, or None when the service is not reachable."""
+    try:
+        with urllib.request.urlopen(f"{_agent_base_url()}/health", timeout=timeout) as response:
+            return json.load(response)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def _agent_post(path: str, payload: dict[str, Any], timeout: float = 120.0) -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"{_agent_base_url()}{path}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
 
 
 def create_app(
@@ -173,15 +211,47 @@ def create_app(
 
     @app.get("/api/assistant/status")
     def assistant_status() -> dict[str, object]:
+        """Report the agent service state without exposing its address or key."""
+        health = _agent_health()
+        if health is None:
+            return {
+                "enabled": False,
+                "status": "offline",
+                "message": "Dịch vụ trợ lý chưa chạy. Web tra cứu Gold vẫn hoạt động bình thường.",
+                "examples": ASSISTANT_EXAMPLES,
+            }
+        if not health.get("llm_configured"):
+            return {
+                "enabled": False,
+                "status": "not_configured",
+                "message": "Trợ lý đã sẵn sàng nhưng chưa có API key cho mô hình ngôn ngữ.",
+                "examples": ASSISTANT_EXAMPLES,
+            }
         return {
-            "enabled": False,
-            "status": "not_configured",
-            "message": "Trợ lý AI chưa được cấu hình. Web tra cứu Gold vẫn hoạt động.",
-            "examples": [
-                "So sánh số tin theo địa điểm",
-                "Tìm kỹ năng thường được nhắc đến cùng Python",
-            ],
+            "enabled": True,
+            "status": "ready",
+            "message": f"Trợ lý dùng {health.get('provider')} · {health.get('model')}, "
+                       f"truy vấn Gold ở chế độ chỉ đọc.",
+            "examples": ASSISTANT_EXAMPLES,
         }
+
+    @app.post("/api/assistant/ask")
+    def assistant_ask(body: AskBody) -> dict[str, object]:
+        """Proxy one question to the Text-to-SQL agent (same origin for the browser)."""
+        status_payload = assistant_status()
+        if not status_payload["enabled"]:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "ASSISTANT_UNAVAILABLE", "message": status_payload["message"]},
+            )
+        try:
+            payload = _agent_post("/ask", {"question": body.question, "history": body.history})
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "AGENT_ERROR", "message": f"{type(exc).__name__}: {exc}"[:300]},
+            ) from exc
+        return payload
 
     static_dir = FilePath(__file__).with_name("static")
     if static_dir.exists():

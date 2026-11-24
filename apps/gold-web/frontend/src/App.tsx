@@ -781,34 +781,102 @@ function Quality({ data }: { data: QualityResponse }) {
 }
 
 function Assistant({ status }: { status: AssistantStatus | null }) {
+  const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string; sql?: string | null }[]>([])
+  const [input, setInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const listRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
+  }, [messages.length, busy])
+
+  async function send(question: string) {
+    const trimmed = question.trim()
+    if (!trimmed || busy) return
+    const history = messages.slice(-6).map((m) => ({ role: m.role, content: m.content }))
+    setMessages((prev) => [...prev, { role: 'user', content: trimmed }])
+    setInput('')
+    setError('')
+    setBusy(true)
+    try {
+      const payload = await api.assistantAsk(trimmed, history)
+      setMessages((prev) => [...prev, { role: 'assistant', content: payload.answer, sql: payload.sql }])
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Không gọi được trợ lý.'
+      setError(message)
+      setMessages((prev) => [...prev, { role: 'assistant', content: message }])
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const ready = Boolean(status?.enabled)
+
   return <div className="assistant-layout">
     <section className="assistant-main">
-      <div className="ai-symbol"><Bot size={30} aria-hidden /></div>
-      <span className="eyebrow">Trợ lý dữ liệu</span>
-      <h2>Đặt câu hỏi.<br />Hiểu thị trường rõ hơn.</h2>
-      <p>{status?.message ?? 'AI sẽ được tích hợp sau khi web/API được nghiệm thu và mô hình được lựa chọn.'}</p>
-      <span className={status?.enabled ? 'status-pill ok' : 'status-pill'}>
-        {status?.enabled ? 'Đã kết nối mô hình AI' : 'Chưa kết nối mô hình AI'}
-      </span>
-      <div className="prompt-examples">
-        {(status?.examples ?? []).map((example) => <div key={example}><Sparkles size={14} aria-hidden /><p>{example}</p></div>)}
+      <div className="assistant-head">
+        <div className="ai-symbol"><Bot size={26} aria-hidden /></div>
+        <div>
+          <span className="eyebrow">Trợ lý dữ liệu</span>
+          <h2>Hỏi thẳng vào dữ liệu Gold</h2>
+        </div>
+        <span className={ready ? 'status-pill ok' : 'status-pill'}>
+          {ready ? 'Đang hoạt động' : 'Chưa cấu hình mô hình'}
+        </span>
       </div>
-      <div className="chat-disabled">
-        <input disabled placeholder="Ô hỏi đáp sẽ mở khi mô hình AI được cấu hình" aria-label="Câu hỏi cho trợ lý AI" />
-        <button type="button" disabled>Gửi</button>
+      <p className="assistant-sub">{status?.message ?? 'Đang kiểm tra trạng thái trợ lý…'}</p>
+
+      <div className="chat-log" ref={listRef} role="log" aria-live="polite">
+        {messages.length === 0 && <div className="chat-empty">
+          <Sparkles size={16} aria-hidden />
+          <p>Đặt câu hỏi về lương, kỹ năng, địa điểm hoặc doanh nghiệp. Trợ lý tự sinh SQL, chạy trên Gold ở chế độ chỉ đọc rồi diễn giải kết quả.</p>
+        </div>}
+        {messages.map((message, index) => <div className={`chat-bubble ${message.role}`} key={`${message.role}-${index}`}>
+          <p>{message.content}</p>
+          {message.sql && <details className="chat-sql">
+            <summary>SQL đã chạy</summary>
+            <pre>{message.sql}</pre>
+          </details>}
+        </div>)}
+        {busy && <div className="chat-bubble assistant"><p className="muted"><RefreshCw className="spin" size={14} aria-hidden /> Đang truy vấn Gold…</p></div>}
+      </div>
+
+      {error && <p className="chat-error" role="alert"><AlertCircle size={14} aria-hidden /> {error}</p>}
+
+      <form className="chat-input" onSubmit={(event) => { event.preventDefault(); void send(input) }}>
+        <input
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          placeholder={ready ? 'Ví dụ: lương trung vị của kỹ sư dữ liệu là bao nhiêu?' : 'Cần cấu hình API key cho mô hình trước'}
+          aria-label="Câu hỏi cho trợ lý AI"
+          disabled={!ready || busy}
+          maxLength={500}
+        />
+        <button type="submit" disabled={!ready || busy || !input.trim()}>Gửi</button>
+      </form>
+
+      <div className="prompt-examples">
+        {(status?.examples ?? []).map((example) => <button
+          type="button"
+          key={example}
+          className="example-chip"
+          disabled={!ready || busy}
+          onClick={() => void send(example)}
+        ><Sparkles size={13} aria-hidden />{example}</button>)}
       </div>
     </section>
     <aside className="assistant-aside">
       <ShieldCheck size={22} className="panel-icon" aria-hidden />
       <h3>Câu trả lời gắn với dữ liệu</h3>
-      <p>Khi được tích hợp, trợ lý chỉ dùng số liệu từ Gold và nêu rõ phạm vi:</p>
+      <p>Trợ lý chỉ đọc tầng Gold qua một tool duy nhất, có kiểm soát:</p>
       <ul>
-        <li><CheckCircle2 size={14} aria-hidden /> Ngày cập nhật và nguồn dữ liệu</li>
-        <li><CheckCircle2 size={14} aria-hidden /> Bộ lọc đang áp dụng</li>
-        <li><CheckCircle2 size={14} aria-hidden /> Số mẫu dùng để tính lương</li>
-        <li><CheckCircle2 size={14} aria-hidden /> Giới hạn của dữ liệu thu thập</li>
+        <li><CheckCircle2 size={14} aria-hidden /> Chỉ cho phép một câu SELECT, giới hạn số dòng</li>
+        <li><CheckCircle2 size={14} aria-hidden /> Chặn ghi/xoá và mọi schema ngoài Gold</li>
+        <li><CheckCircle2 size={14} aria-hidden /> Câu trả lời kèm ngày cập nhật và phạm vi</li>
+        <li><CheckCircle2 size={14} aria-hidden /> Hiển thị lại SQL để kiểm chứng</li>
       </ul>
-      <p className="aside-note">Hiện tại, số liệu có thể khám phá trực tiếp qua các trang Tổng quan, Kỹ năng và Doanh nghiệp.</p>
+      <p className="aside-note">Số liệu vẫn khám phá được trực tiếp qua Tổng quan, Tin tuyển dụng, Kỹ năng và Doanh nghiệp.</p>
     </aside>
   </div>
 }

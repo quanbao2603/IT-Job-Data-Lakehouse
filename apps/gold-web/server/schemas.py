@@ -50,3 +50,17 @@ class ErrorBody(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorBody
+
+class AskBody(BaseModel):
+    """One question for the Text-to-SQL agent, with the last few chat turns."""
+
+    question: str = Field(min_length=1, max_length=500)
+    history: list[dict[str, str]] = Field(default_factory=list)
+
+    @field_validator("question", mode="before")
+    @classmethod
+    def strip_question(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+

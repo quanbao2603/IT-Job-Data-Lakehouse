@@ -71,6 +71,14 @@ export type QualityResponse = {
   }
 }
 export type AssistantStatus = { enabled: boolean; status: string; message: string; examples: string[] }
+export type AssistantAnswer = {
+  answer: string
+  sql: string | null
+  rows: Record<string, unknown>[]
+  steps: number
+  provider: string
+  model: string
+}
 
 const INSIGHTS_PREFIX = /^\/insights(\/|$)/.test(window.location.pathname) ? '/insights' : ''
 const API_ROOT = `${INSIGHTS_PREFIX}/api`
@@ -85,12 +93,24 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, params?: Record<string, string | number | undefined>, signal?: AbortSignal): Promise<T> {
+async function request<T>(
+  path: string,
+  params?: Record<string, string | number | undefined>,
+  signal?: AbortSignal,
+  body?: unknown,
+): Promise<T> {
   const url = new URL(`${window.location.origin}${API_ROOT}${path}`)
   Object.entries(params ?? {}).forEach(([key, value]) => {
     if (value !== undefined && value !== '') url.searchParams.set(key, String(value))
   })
-  const response = await fetch(url, { headers: { Accept: 'application/json' }, signal })
+  const response = await fetch(url, {
+    headers: body === undefined
+      ? { Accept: 'application/json' }
+      : { Accept: 'application/json', 'Content-Type': 'application/json' },
+    method: body === undefined ? 'GET' : 'POST',
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
+  })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
     throw new ApiError(
@@ -113,4 +133,6 @@ export const api = {
   companies: (filters: Filters, signal?: AbortSignal) => request<CompaniesResponse>('/companies', filters, signal),
   quality: (filters: Filters = {}, signal?: AbortSignal) => request<QualityResponse>('/quality', filters, signal),
   assistantStatus: () => request<AssistantStatus>('/assistant/status'),
+  assistantAsk: (question: string, history: { role: string; content: string }[], signal?: AbortSignal) =>
+    request<AssistantAnswer>('/assistant/ask', undefined, signal, { question, history }),
 }
