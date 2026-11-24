@@ -96,8 +96,35 @@ def ask_endpoint(body: AskRequest) -> AskResponse:
     except AgentNotConfigured as exc:
         raise HTTPException(status_code=503, detail={"code": "LLM_NOT_CONFIGURED", "message": str(exc)}) from exc
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "AGENT_ERROR", "message": f"{type(exc).__name__}: {exc}"[:300]},
-        ) from exc
+        # A model or transport hiccup must read as an answer, not as a silent failure:
+        # the user always gets text back that explains what happened.
+        return AskResponse(
+            answer=(
+                "Xin lỗi, mình chưa xử lý được câu này ngay bây giờ "
+                f"({type(exc).__name__}). Bạn thử hỏi lại hoặc hỏi cụ thể hơn giúp mình nhé."
+            ),
+            sql=None,
+            rows=[],
+            steps=0,
+            provider=settings.provider,
+            model=settings.model,
+        )
+
+    if not result.answer.strip():
+        # One retry with an explicit nudge beats an empty bubble.
+        try:
+            retry = ask(
+                f"{body.question}\n\nHãy trả lời trực tiếp bằng tiếng Việt, nêu số liệu cụ thể.",
+                history=history, settings=settings,
+                snapshot_date=os.getenv("AGENT_SNAPSHOT_DATE") or None,
+            )
+            if retry.answer.strip():
+                result = retry
+        except Exception:  # noqa: BLE001
+            pass
+    if not result.answer.strip():
+        result.answer = (
+            "Mình chưa tạo được câu trả lời cho câu hỏi này. Bạn thử hỏi cụ thể hơn, "
+            "ví dụ: “lương trung vị của nhóm Dữ liệu & AI là bao nhiêu?”."
+        )
     return AskResponse(**result.as_dict())

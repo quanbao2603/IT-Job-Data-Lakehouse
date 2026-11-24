@@ -47,7 +47,7 @@ def _agent_health(timeout: float = 3.0) -> dict[str, Any] | None:
         return None
 
 
-def _agent_post(path: str, payload: dict[str, Any], timeout: float = 120.0) -> dict[str, Any]:
+def _agent_post(path: str, payload: dict[str, Any], timeout: float = 200.0) -> dict[str, Any]:
     request = urllib.request.Request(
         f"{_agent_base_url()}{path}",
         data=json.dumps(payload).encode("utf-8"),

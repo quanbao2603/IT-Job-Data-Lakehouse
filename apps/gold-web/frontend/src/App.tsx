@@ -784,29 +784,61 @@ function Assistant({ status }: { status: AssistantStatus | null }) {
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string; sql?: string | null }[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
+    if (!busy) {
+      setElapsed(0)
+      return
+    }
+    const startedAt = Date.now()
+    const timer = window.setInterval(() => setElapsed(Math.round((Date.now() - startedAt) / 1000)), 1000)
+    return () => window.clearInterval(timer)
+  }, [busy])
+
+  useEffect(() => {
+    const list = listRef.current
+    // scrollTo is missing in some webviews (and in jsdom), so guard it instead of
+    // letting a cosmetic detail break the chat render.
+    if (list && typeof list.scrollTo === 'function') {
+      list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
+    }
   }, [messages.length, busy])
 
   async function send(question: string) {
     const trimmed = question.trim()
-    if (!trimmed || busy) return
+    if (!trimmed) {
+      setError('Hãy nhập câu hỏi trước khi gửi.')
+      return
+    }
+    if (busy) return
     const history = messages.slice(-6).map((m) => ({ role: m.role, content: m.content }))
     setMessages((prev) => [...prev, { role: 'user', content: trimmed }])
     setInput('')
     setError('')
     setBusy(true)
+    // A comparison question can take a minute; abort clearly instead of spinning forever.
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 180_000)
     try {
-      const payload = await api.assistantAsk(trimmed, history)
-      setMessages((prev) => [...prev, { role: 'assistant', content: payload.answer, sql: payload.sql }])
+      const payload = await api.assistantAsk(trimmed, history, controller.signal)
+      const answer = (payload.answer || '').trim()
+      setMessages((prev) => [...prev, {
+        role: 'assistant',
+        content: answer || 'Mình chưa tạo được câu trả lời cho câu hỏi này. Bạn thử hỏi cụ thể hơn (ví dụ: "lương trung vị của nhóm Dữ liệu & AI").',
+        sql: payload.sql,
+      }])
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'Không gọi được trợ lý.'
+      const aborted = caught instanceof DOMException && caught.name === 'AbortError'
+      const message = aborted
+        ? 'Trợ lý phản hồi quá lâu (quá 3 phút). Bạn thử hỏi ngắn hơn hoặc hỏi lại.'
+        : caught instanceof Error ? caught.message : 'Không gọi được trợ lý.'
       setError(message)
       setMessages((prev) => [...prev, { role: 'assistant', content: message }])
     } finally {
+      window.clearTimeout(timeout)
       setBusy(false)
     }
   }
@@ -839,7 +871,7 @@ function Assistant({ status }: { status: AssistantStatus | null }) {
             <pre>{message.sql}</pre>
           </details>}
         </div>)}
-        {busy && <div className="chat-bubble assistant"><p className="muted"><RefreshCw className="spin" size={14} aria-hidden /> Đang truy vấn Gold…</p></div>}
+        {busy && <div className="chat-bubble assistant"><p className="muted"><RefreshCw className="spin" size={14} aria-hidden /> Đang truy vấn Gold… {elapsed > 0 && `${elapsed}s`}</p></div>}
       </div>
 
       {error && <p className="chat-error" role="alert"><AlertCircle size={14} aria-hidden /> {error}</p>}
