@@ -37,8 +37,14 @@ case "$status" in
       echo "$out" | tail -5
     fi
     ;;
-  *)
+  BLOCKED|PROGRESS|COOLDOWN|COMPLETED)
     : # im lặng: vẫn bị chặn, đang thu thập dần, hoặc vừa xong nên đang chờ
+    ;;
+  *)
+    # Never swallow an unparseable run: a missing interpreter or a crashed script looks exactly
+    # like silence otherwise, and the sweep would stop without anyone noticing.
+    echo "⚠️ vieclam24h sweep: không đọc được kết quả (mã thoát $code)"
+    echo "$out" | tail -5
     ;;
 esac
 exit 0
