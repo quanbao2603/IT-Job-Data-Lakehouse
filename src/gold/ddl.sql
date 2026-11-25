@@ -424,3 +424,6 @@ CREATE TABLE IF NOT EXISTS gold.job_detail (
     PRIMARY KEY (gold_release_id, unified_job_id)
 );
 CREATE INDEX IF NOT EXISTS idx_job_detail_job ON gold.job_detail(unified_job_id);
+
+-- Serving query joins the platform fact by job_key alone, which the composite PK cannot serve.
+CREATE INDEX IF NOT EXISTS idx_platform_daily_job ON gold.fact_job_platform_daily(job_key);

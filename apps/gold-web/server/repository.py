@@ -268,10 +268,20 @@ class GoldRepository:
         with self._read_transaction() as (_, cursor):
             context = self._release_context_from_cursor(cursor)
             self._assert_expected_release(context, params)
+            # One DISTINCT pass over the platform fact, then a hash join. The earlier
+            # correlated NOT EXISTS ran per snapshot row and pushed the summary query to ~4.6s,
+            # which the 5s statement timeout turned into a 503 for any concurrent visitor.
             base = f"""
                 FROM gold.v_job_snapshot s
                 JOIN gold.dim_job j ON j.job_key = s.job_key
                 JOIN gold.dim_company c ON c.company_key = s.company_key
+                LEFT JOIN (
+                    SELECT DISTINCT job_key
+                    FROM gold.fact_job_platform_daily
+                    WHERE gold_release_id = (
+                        SELECT gold_release_id FROM gold_control.active_release WHERE id = 1
+                    )
+                ) plat ON plat.job_key = s.job_key
                 WHERE {where}
             """
             cursor.execute(
@@ -283,10 +293,7 @@ class GoldRepository:
                            FILTER (WHERE s.salary_sample_flag) AS salary_median,
                        COUNT(*) FILTER (WHERE j.city_bucket = 'UNKNOWN')::int AS missing_city,
                        COUNT(*) FILTER (WHERE s.last_seen_at >= NOW() - INTERVAL '14 days')::int AS recent_jobs,
-                       COUNT(*) FILTER (WHERE NOT EXISTS (
-                           SELECT 1 FROM gold.v_job_platform p
-                           WHERE p.job_key = s.job_key
-                             AND p.gold_release_id = s.gold_release_id))::int AS no_platform,
+                       COUNT(*) FILTER (WHERE plat.job_key IS NULL)::int AS no_platform,
                        MIN(s.last_seen_at)::date AS oldest_last_seen,
                        MAX(s.last_seen_at) AS last_seen_at
                 {base}
