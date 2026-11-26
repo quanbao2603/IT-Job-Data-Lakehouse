@@ -50,7 +50,14 @@ def validate_source_results(
     source_results: Dict[str, Dict[str, Any]],
     *,
     expected_sources: Iterable[str],
+    allow_partial: bool = False,
 ) -> Dict[str, Any]:
+    """Check every source reported a result.
+
+    `allow_partial=True` turns a failed source into a reported fact instead of an exception. One
+    platform timing out used to abort the whole nightly run: the audit raised, Silver never ran,
+    Gold was never published, and eight healthy sources produced nothing (devwork, 26/11).
+    """
     expected = list(expected_sources)
     missing = [source for source in expected if source not in source_results]
     if missing:
@@ -66,14 +73,20 @@ def validate_source_results(
         for source, result in source_results.items()
         if source in expected and result.get("status") == "DEFERRED"
     }
-    if failures:
+    if failures and not allow_partial:
         details = ", ".join(f"{source}={status}" for source, status in failures.items())
         raise AuditGateError(f"Non-success source result: {details}")
 
+    successes = sum(1 for source in expected if source_results[source].get("status") == "SUCCESS")
+    if allow_partial and failures and successes == 0:
+        details = ", ".join(f"{source}={status}" for source, status in failures.items())
+        raise AuditGateError(f"Every source failed, nothing to publish: {details}")
+
     return {
-        "status": "DEFERRED" if deferred else "PASS",
+        "status": "PARTIAL" if failures else ("DEFERRED" if deferred else "PASS"),
+        "failed_sources": {source: status for source, status in failures.items()},
         "source_count": len(expected),
-        "success_count": sum(1 for source in expected if source_results[source].get("status") == "SUCCESS"),
+        "success_count": successes,
         "deferred_sources": deferred,
         "empty_success_count": sum(
             1 for source in expected if int(source_results[source].get("records_ingested", 0)) == 0
@@ -105,13 +118,19 @@ def audit_bronze_run(
     state_db_path: str,
     minio_client: Optional[Any] = None,
     bronze_bucket: str = "bronze",
+    allow_partial: bool = True,
 ) -> Dict[str, Any]:
     """Validate source status plus State Store/manifest/object evidence."""
-    summary = validate_source_results(source_results, expected_sources=expected_sources)
+    summary = validate_source_results(
+        source_results, expected_sources=expected_sources, allow_partial=allow_partial
+    )
     if summary.get("status") == "DEFERRED":
         summary.update({"checked_objects": 0, "state_store": "DEFERRED"})
         return summary
-    raw_run_ids = [source_results[source].get("run_id") for source in expected_sources]
+    audited_sources = [
+        source for source in expected_sources if source_results[source].get("status") == "SUCCESS"
+    ]
+    raw_run_ids = [source_results[source].get("run_id") for source in audited_sources]
     if any(not run_id for run_id in raw_run_ids):
         raise AuditGateError("A successful source result is missing run_id")
     run_ids = [str(run_id) for run_id in raw_run_ids]
@@ -126,7 +145,7 @@ def audit_bronze_run(
     checked_objects = 0
     with sqlite3.connect(state_db_path) as connection:
         connection.row_factory = sqlite3.Row
-        for source in expected_sources:
+        for source in audited_sources:
             result = source_results[source]
             run_id = result["run_id"]
             run = runs[run_id]

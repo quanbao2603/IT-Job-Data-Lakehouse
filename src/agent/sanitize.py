@@ -36,6 +36,13 @@ TECH_FRAGMENT_PATTERNS = (
     (re.compile(r"\b(?:gold|lakehouse|bronze|silver)\b", re.I), ""),
 )
 
+# The model keeps volunteering a liveness claim from a lifecycle column, which the data contract
+# cannot support: the platform only proves the posting existed at snapshot time. The claim is
+# dropped at segment level so the surrounding figures survive ("Số tin: X · đang mở: X" keeps the
+# count and loses the claim).
+LIVENESS_CLAIM = re.compile(r"(?:đang\s+mở|đang\s+tuyển|còn\s+tuyển|vẫn\s+mở)", re.I)
+SEGMENT_SPLIT = re.compile(r"\s+[-–—]\s+|(?<=[.;])\s+|\n")
+
 MULTI_SPACE = re.compile(r"[ \t]{2,}")
 DOUBLE_PUNCT = re.compile(r"\s+([,.;:])")
 
@@ -58,6 +65,15 @@ def scrub_answer(text: str) -> str:
             continue
         for pattern, replacement in TECH_FRAGMENT_PATTERNS:
             stripped = pattern.sub(replacement, stripped)
+        if LIVENESS_CLAIM.search(stripped) and re.search(r"\d", stripped):
+            pieces = [piece for piece in SEGMENT_SPLIT.split(stripped) if piece]
+            kept_pieces = [
+                piece for piece in pieces
+                if not (LIVENESS_CLAIM.search(piece) and re.search(r"\d", piece))
+            ]
+            stripped = " - ".join(kept_pieces)
+            if not stripped:
+                continue
         if not stripped.strip(" -•*\t"):
             continue
         cleaned = MULTI_SPACE.sub(" ", stripped)

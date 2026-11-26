@@ -40,7 +40,7 @@ Tất cả view `v_*` đã gắn với release Gold đang công bố, KHÔNG c�
 
 gold.v_job_snapshot  -- 1 dòng = 1 tin đã hợp nhất trong release hiện tại
   unified_job_id TEXT, job_key TEXT, company_key TEXT, date_key INT,
-  posted_date_key INT, job_count INT, open_job_count INT, newly_seen_job_count INT,
+  posted_date_key INT, job_count INT, newly_seen_job_count INT,
   entity_status TEXT, canonical_salary_min_vnd BIGINT, canonical_salary_max_vnd BIGINT,
   salary_midpoint_vnd NUMERIC, salary_sample_flag BOOLEAN, source_count INT,
   observation_count INT, last_seen_at TIMESTAMPTZ, snapshot_cutoff_at TIMESTAMPTZ,
@@ -100,7 +100,8 @@ gold.dim_date  -- date_key INT, full_date DATE, year, quarter, month, week_of_ye
 6. Khi đếm công ty, loại nhóm kỹ thuật: `AND NOT c.is_unknown` (join gold.dim_company).
 7. Khi đếm kỹ năng, loại `d.is_unknown`.
 8. Dữ liệu là "nguồn cung tin hệ thống quan sát được", KHÔNG phải tổng số việc làm thị trường.
-9. `open_job_count` suy từ `entity_status`; không tự suy trạng thái từ `last_seen_at`.
+9. `entity_status` là giá trị vòng đời đã chuẩn hoá, KHÔNG phải bằng chứng tin còn tuyển. Không
+   dùng nó, và không dùng bất kỳ cột đếm trạng thái nào, để nói "đang mở"/"đang tuyển".
 """
 
 

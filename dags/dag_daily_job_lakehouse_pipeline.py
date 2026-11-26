@@ -242,7 +242,7 @@ def _run_silver(**context: Any) -> Dict[str, Any]:
         }
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         raise AirflowSkipException(result["reason"])
-    if audit_status != "PASS":
+    if audit_status not in {"PASS", "PARTIAL"}:
         reason = "Bronze audit did not pass; Silver was not run"
         print(json.dumps({"status": "SKIPPED", "reason": reason}, ensure_ascii=False, sort_keys=True))
         raise AirflowSkipException(reason)
@@ -310,10 +310,12 @@ def _report_success(**context: Any) -> Dict[str, Any]:
     silver_result = context["ti"].xcom_pull(task_ids="silver_pipeline_guard") or {"status": "SKIPPED"}
     source_results = audit_result.get("source_results", {})
     audit_status = audit_result.get("audit", {}).get("status")
+    failed_sources = audit_result.get("audit", {}).get("failed_sources", {})
     if audit_status == "DEFERRED":
         status = "DEFERRED"
-    elif audit_status == "PASS" and silver_result.get("status") == "SUCCESS":
-        status = "SUCCESS"
+    elif audit_status in {"PASS", "PARTIAL"} and silver_result.get("status") == "SUCCESS":
+        # A failed source is reported, not fatal: the other eight platforms still publish.
+        status = "SUCCESS_WITH_FAILURES" if failed_sources else "SUCCESS"
     else:
         status = "FAILED"
     summary = {
@@ -325,10 +327,23 @@ def _report_success(**context: Any) -> Dict[str, Any]:
         "bronze_audit": audit_status,
         "silver_trigger": silver_result.get("status", "SKIPPED"),
         "deferred_sources": audit_result.get("audit", {}).get("deferred_sources", {}),
+        "failed_sources": failed_sources,
     }
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     if status == "FAILED":
         raise RuntimeError("Bronze/Silver pipeline did not complete successfully; see summary")
+    if failed_sources:
+        try:
+            from src.utils.operational import send_alert
+
+            listing = ", ".join(f"{source}={state}" for source, state in sorted(failed_sources.items()))
+            send_alert(
+                f"⚠️ IT Insight: pipeline {status} — nguồn lỗi: {listing}. "
+                f"Đã publish {summary['source_success_count']}/{len(source_results)} nguồn, "
+                f"{summary['records_ingested']} bản ghi."
+            )
+        except Exception as exc:  # an alert must never turn a partial run into a failed run
+            print(json.dumps({"alert_error": str(exc)}, ensure_ascii=False))
     return summary
 
 

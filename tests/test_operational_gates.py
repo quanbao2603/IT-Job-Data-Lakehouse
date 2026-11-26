@@ -137,6 +137,36 @@ class TestAuditGate(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["source_count"], 2)
 
+    def test_partial_audit_reports_failed_source_instead_of_aborting(self):
+        """Eight healthy platforms must publish even when one source times out."""
+        result = validate_source_results(
+            {
+                "devwork": {"status": "FAILED"},
+                "topcv": {"status": "SUCCESS", "records_ingested": 91},
+            },
+            expected_sources=["devwork", "topcv"],
+            allow_partial=True,
+        )
+        self.assertEqual(result["status"], "PARTIAL")
+        self.assertEqual(result["failed_sources"], {"devwork": "FAILED"})
+        self.assertEqual(result["success_count"], 1)
+
+    def test_partial_audit_still_fails_when_every_source_failed(self):
+        with self.assertRaises(AuditGateError):
+            validate_source_results(
+                {"a": {"status": "FAILED"}, "b": {"status": "FAILED"}},
+                expected_sources=["a", "b"],
+                allow_partial=True,
+            )
+
+    def test_partial_audit_still_fails_on_missing_source_entry(self):
+        with self.assertRaises(AuditGateError):
+            validate_source_results(
+                {"a": {"status": "SUCCESS"}},
+                expected_sources=["a", "b"],
+                allow_partial=True,
+            )
+
     def test_audit_defers_when_a_source_is_deferred(self):
         result = validate_source_results(
             {

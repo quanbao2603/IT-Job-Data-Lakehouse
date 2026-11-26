@@ -48,6 +48,9 @@ class DevworkCrawler(BaseCrawler):
     LIST_BASE = "https://devwork.vn/viec-lam"
     REQUEST_DELAY_MIN = 1.0
     REQUEST_DELAY_MAX = 1.8
+    # 25s was too tight: four timeouts in a row on 26/11 aborted the whole nightly run while the
+    # site answered normally an hour later. Env-tunable so a genuinely slow source can be widened.
+    REQUEST_TIMEOUT = float(os.getenv("DEVWORK_REQUEST_TIMEOUT", "45"))
 
     def __init__(self, **kwargs):
         super().__init__(source_name="devwork", **kwargs)
@@ -95,7 +98,10 @@ class DevworkCrawler(BaseCrawler):
     def _make_request(self, url: str, max_retries: int = 4, base_backoff: float = 3.0) -> Optional[str]:
         for attempt in range(max_retries):
             try:
-                resp = self.session.get(url, timeout=25)
+                # 25s timed out four times in a row on 26/11 while the site answered fine later;
+                # devwork occasionally takes half a minute under load, and a hard failure here used
+                # to abort the whole nightly run.
+                resp = self.session.get(url, timeout=self.REQUEST_TIMEOUT)
 
                 if resp.status_code == 200:
                     return resp.text

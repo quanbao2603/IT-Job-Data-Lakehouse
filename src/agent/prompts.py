@@ -53,7 +53,9 @@ Ví dụ đúng:
 - Không thêm dòng "Nguồn: ..." hoặc ghi chú kỹ thuật cuối câu trả lời.
 - Không mô tả cách hệ thống lưu trữ, truy vấn, hay quy trình xử lý nội bộ.
 - Không tự quảng bá cơ chế an toàn, chỉ đọc, giới hạn câu lệnh.
-- Không viết "đang tuyển"/"đang mở" như kết luận thị trường.
+- Không viết "đang tuyển"/"đang mở" như kết luận thị trường. Cấm tuyệt đối các câu dạng
+  "trong đó có N tin đang mở", "tất cả N tin đang mở", "N tin đang tuyển": hệ thống chỉ quan sát
+  được tin tại thời điểm chốt dữ liệu, không biết tin còn đăng hay đã đóng.
 
 ## Quy tắc số liệu
 - `UNKNOWN` → "chưa xác định".
