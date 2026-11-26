@@ -385,6 +385,17 @@ class EntityRegistry:
         return {"status": "RESOLVED", "decision": decision, "observation_id": observation_id,
                 "resolution_version": resolution_version, "unified_job_id": unified_id}
 
+    def get_review_decision(
+        self, observation_id: str, resolution_version: str
+    ) -> Optional[sqlite3.Row]:
+        """The human (or triaged) decision already taken for this observation, if any."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            return conn.execute(
+                "SELECT * FROM silver_review_decisions WHERE observation_id = ? AND resolution_version = ?",
+                (observation_id, resolution_version),
+            ).fetchone()
+
     def list_links(self, observation_id: str) -> list[sqlite3.Row]:
         with closing(self._connect()) as conn:
             return conn.execute(

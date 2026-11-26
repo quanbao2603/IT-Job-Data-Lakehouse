@@ -320,6 +320,28 @@ class EntityResolver:
             self._record_link(observation, result, previous_unified_job_id=previous_unified_id)
             return result
         if score >= 0.75:
+            # A decision already taken must survive every replay. Without this lookup the resolver
+            # re-derived REVIEW_REQUIRED from the same score and the queue refilled each night,
+            # which is why 688 links sat unanswered indefinitely.
+            decision = self.registry.get_review_decision(observation["observation_id"], self.resolution_version)
+            if decision is not None and decision["decision"] == "ACCEPT" and decision["candidate_entity_id"]:
+                target_id = decision["candidate_entity_id"]
+                self.registry.bind_source_job(platform, source_job_id, target_id, observed_at)
+                self._record_observation(observation, target_id, canonical_url)
+                result = MatchResult(target_id, None, "FUZZY_TITLE_COMPANY_LOCATION", score, "MANUAL_MATCH")
+                self._record_link(observation, result, previous_unified_job_id=previous_unified_id)
+                return result
+            if decision is not None and decision["decision"] == "REJECT":
+                # Reviewed and kept apart: do not ask again, and do not merge.
+                return self._create_distinct(
+                    observation,
+                    observed_at,
+                    fingerprint,
+                    canonical_url,
+                    "FUZZY_TITLE_COMPANY_LOCATION",
+                    score,
+                    previous_unified_id,
+                )
             result = MatchResult(None, candidate["unified_job_id"], "FUZZY_TITLE_COMPANY_LOCATION", score, "REVIEW_REQUIRED", REVIEW_REASON)
             self._record_observation(observation, None, canonical_url)
             self._record_link(observation, result, previous_unified_job_id=previous_unified_id)
