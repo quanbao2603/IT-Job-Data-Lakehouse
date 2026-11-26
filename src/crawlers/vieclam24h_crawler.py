@@ -22,6 +22,7 @@ from src.crawlers.base_crawler import (
     BaseCrawler,
     CrawlerSourceError,
     emit_cli_result,
+    incremental_scan_pages,
     require_listing_data,
 )
 
@@ -482,7 +483,6 @@ class Vieclam24hCrawler(BaseCrawler):
     ) -> Iterator[Dict[str, Any]]:
         mode_label = "VÉT CẠN TOÀN BỘ (FULL BACKFILL)" if mode == "full" else "TĂNG TRƯỞNG (INCREMENTAL)"
         is_incremental = (mode == "incremental")
-        watermark_hit = False
         watermark_date = watermark_ts[:10] if watermark_ts else ""
 
         print(f"[*] Bắt đầu quét Vieclam24h [ma trận IT: occupation_ids={'+'.join(map(str, self.OCCUPATION_IDS))}] "
@@ -490,13 +490,13 @@ class Vieclam24hCrawler(BaseCrawler):
               f"{max(1, int(getattr(self, 'page_start', 1)))})...")
 
         first_page = max(1, int(getattr(self, "page_start", 1)))
-        last_page = first_page + max(0, max_pages - 1)
+        window = incremental_scan_pages(mode, max_pages, getattr(self, "source_name", "vieclam24h"))
+        last_page = first_page + max(0, window - 1)
         for page in range(first_page, last_page + 1):
-            if watermark_hit:
-                break
+            collected_this_page = 0
 
             url = self._list_url(page)
-            print(f"   -> Đang tải trang tìm kiếm {page}/{max_pages}: {url}")
+            print(f"   -> Đang tải trang tìm kiếm {page}/{last_page}: {url}")
             html = self._make_request(url)
             if not html:
                 raise CrawlerSourceError(
@@ -529,18 +529,17 @@ class Vieclam24hCrawler(BaseCrawler):
             # Id-cursor là chốt chính (thứ tự listing không đơn điệu theo thời gian do ưu tiên tin trả phí)
             for card in cards:
                 if is_incremental:
+                    # Bỏ qua đúng thẻ mốc rồi quét tiếp: dừng cả trang ở đây từng làm mất
+                    # toàn bộ tin mới trong ngày trong khi run vẫn báo SUCCESS.
                     if last_record_id and str(card["job_id"]) == str(last_record_id):
-                        print(f"      🎯 [WATERMARK HIT] Chạm ranh giới tin cũ (Job ID: {card['job_id']}). Dừng quét!")
-                        watermark_hit = True
-                        self._empty_result_confirmed = True
-                        break
+                        print(f"      ↷ [MỐC] Bỏ qua tin đã cào {card['job_id']}, tiếp tục quét.")
+                        continue
                     # Datetime guard: chỉ dừng khi tin CỦ HƠN hẳn mốc (strict < → giữ tin cùng ngày)
                     if self._yield_wrapper_guard(card, watermark_date):
-                        print(f"      🎯 [WATERMARK HIT] Tin đăng {card['posted_iso']} cũ hơn mốc {watermark_date}. Dừng quét!")
-                        watermark_hit = True
-                        self._empty_result_confirmed = True
-                        break
+                        print(f"      ↷ [MỐC] Tin đăng {card['posted_iso']} cũ hơn mốc {watermark_date}, bỏ qua.")
+                        continue
 
+                collected_this_page += 1
                 self.heartbeat()
                 if getattr(self, "skip_detail", False):
                     # The search JSON already carries employer, place, salary and level, so a
@@ -560,10 +559,12 @@ class Vieclam24hCrawler(BaseCrawler):
 
                 time.sleep(random.uniform(self.REQUEST_DELAY_MIN, self.REQUEST_DELAY_MAX))
 
-            if watermark_hit:
+            if collected_this_page == 0:
+                print(f"      [!] Trang {page} không còn tin mới. Dừng quét.")
                 break
-            gap = getattr(self, "page_gap", None)
-            time.sleep(gap if gap else random.uniform(self.PAGE_DELAY_MIN, self.PAGE_DELAY_MAX))
+            if page < last_page:
+                gap = getattr(self, "page_gap", None)
+                time.sleep(gap if gap else random.uniform(self.PAGE_DELAY_MIN, self.PAGE_DELAY_MAX))
 
     @staticmethod
     def _yield_wrapper_guard(card: Dict[str, Any], watermark_date: str) -> bool:

@@ -246,8 +246,8 @@ class TestUpziFetchJobsIncremental(CrossClassCrawlerMixin, unittest.TestCase):
             self.assertEqual(r["platform"], "upzi")
             self.assertRegex(r["content_hash"], r'^[0-9a-f]{64}$')
 
-    def test_incremental_stops_on_last_record_id(self):
-        """Incremental stops when it hits last_record_id — yields only cards before it."""
+    def test_incremental_skips_the_boundary_card_and_keeps_scanning(self):
+        """Incremental skips the boundary card; the cards around it are still collected."""
         # The 2nd card's ID is the watermark boundary
         stop_id = "b283f916-fd32-4b2b-953a-b081ebd391e7"
 
@@ -264,9 +264,10 @@ class TestUpziFetchJobsIncremental(CrossClassCrawlerMixin, unittest.TestCase):
                 last_record_id=stop_id
             ))
 
-        # Should yield only the first card (before hitting the watermark ID)
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["job_id"], "47712eb5-569f-478b-aba6-b50f355e0ef8")
+        ids = [r["job_id"] for r in results]
+        self.assertNotIn(stop_id, ids)
+        self.assertEqual(ids[0], "47712eb5-569f-478b-aba6-b50f355e0ef8")
+        self.assertGreater(len(ids), 1, "các thẻ sau mốc vẫn phải được cào")
 
     def test_incremental_future_watermark_yields_nothing(self):
         """Watermark in the future → all cards are older → yields nothing."""

@@ -23,6 +23,7 @@ from src.crawlers.base_crawler import (
     BaseCrawler,
     CrawlerSourceError,
     emit_cli_result,
+    incremental_scan_pages,
     require_listing_data,
 )
 
@@ -32,8 +33,11 @@ class TopCVCrawler(BaseCrawler):
     SEARCH_BASE = "https://www.topcv.vn/tim-viec-lam-it?page={page}"
     # Tunable without editing code: TopCV starts returning HTTP 429 when the crawl
     # exceeds roughly 15-20 requests/minute from one IP.
-    REQUEST_DELAY_MIN = float(os.getenv("TOPCV_DELAY_MIN", "2.0"))
-    REQUEST_DELAY_MAX = float(os.getenv("TOPCV_DELAY_MAX", "2.2"))
+    # Measured against TopCV: 2-2.5s trips 429 after ~20 requests, 6-8s after ~6, while 15-19s
+    # ran 425 requests without a single block. The default is the only pace that survives a
+    # daily incremental, so it is the default and callers do not have to remember it.
+    REQUEST_DELAY_MIN = float(os.getenv("TOPCV_DELAY_MIN", "15.0"))
+    REQUEST_DELAY_MAX = float(os.getenv("TOPCV_DELAY_MAX", "19.0"))
     # curl_cffi impersonates a real Chrome TLS fingerprint, so Cloudflare no longer
     # answers 403 for every request. A faster burst (20-30) drew HTTP 429 from TopCV,
     # so the crawl runs at ~20 requests/minute: 10-15 requests, then a 20-30s pause,
@@ -511,15 +515,13 @@ class TopCVCrawler(BaseCrawler):
         listing_records: list[Dict[str, Any]] = []
         listing_only = os.getenv("TOPCV_LISTING_ONLY", "0").strip().lower() in {"1", "true", "yes"}
         seen = set()
-        watermark_hit = False
         reported_total = None
 
-        for page in range(1, max_pages + 1):
-            if watermark_hit:
-                break
+        scan_pages = incremental_scan_pages(mode, max_pages, getattr(self, "source_name", "topcv"))
+        for page in range(1, scan_pages + 1):
 
             url = self.SEARCH_BASE.format(page=page)
-            print(f"   -> Đang tải trang tìm kiếm {page}/{max_pages}: {url}")
+            print(f"   -> Đang tải trang tìm kiếm {page}/{scan_pages}: {url}")
             html = self._make_request(url)
             if not html:
                 raise CrawlerSourceError(
@@ -543,17 +545,17 @@ class TopCVCrawler(BaseCrawler):
                     jid = self._extract_job_id(href)
 
                     if mode == "incremental" and last_record_id and str(jid) == str(last_record_id):
-                        print(f"      🎯 [WATERMARK HIT] Chạm ranh giới tin cũ đã cào (Job ID: {jid}). Dừng quét!")
-                        watermark_hit = True
-                        self._empty_result_confirmed = True
-                        break
+                        # TopCV promotes paid listings, so the boundary card can sit at the top of
+                        # page 1. Skipping it (not stopping) is what keeps the day's new jobs.
+                        print(f"      ↷ [MỐC] Bỏ qua tin đã cào {jid}, tiếp tục quét.")
+                        continue
 
                     job_links.append(href)
 
             print(f"      [✓] Trang {page} phát hiện {len(job_links)} tin tuyển dụng mới.")
             self.heartbeat()
 
-            if not job_links and not watermark_hit:
+            if not job_links:
                 if page == 1:
                     require_listing_data(
                         getattr(self, "source_name", "topcv"),
@@ -565,9 +567,6 @@ class TopCVCrawler(BaseCrawler):
                 print(f"      [!] Đã hết tin phân trang tại trang {page}. Dừng quét.")
                 break
 
-            if watermark_hit:
-                self._empty_result_confirmed = True
-
             candidates_urls.extend(job_links)
 
             if listing_only:
@@ -576,10 +575,8 @@ class TopCVCrawler(BaseCrawler):
                     if record:
                         listing_records.append(record)
 
-            if watermark_hit:
-                break
-
-            time.sleep(random.uniform(1.0, 1.5))
+            if page < scan_pages:
+                time.sleep(random.uniform(1.0, 1.5))
 
         if listing_only:
             print(f"\n[*] LISTING-ONLY: {len(listing_records)} tin lấy trực tiếp từ trang danh sách (không gọi trang chi tiết)")

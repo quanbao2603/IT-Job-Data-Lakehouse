@@ -24,6 +24,7 @@ from src.crawlers.base_crawler import (
     BaseCrawler,
     CrawlerSourceError,
     emit_cli_result,
+    incremental_scan_pages,
     require_listing_data,
 )
 
@@ -434,17 +435,16 @@ class DevworkCrawler(BaseCrawler):
     ) -> Iterator[Dict[str, Any]]:
         mode_label = "VÉT CẠN TOÀN BỘ (FULL BACKFILL)" if mode == "full" else "TĂNG TRƯỞNG (INCREMENTAL)"
         is_incremental = (mode == "incremental")
-        watermark_hit = False
         watermark_date = watermark_ts[:10] if watermark_ts else ""
 
-        print(f"[*] Bắt đầu quét Devwork.vn [toàn bộ tin IT] - Chế độ: {mode_label} (Tối đa {max_pages} trang)...")
+        scan_pages = incremental_scan_pages(mode, max_pages, getattr(self, "source_name", "devwork"))
+        print(f"[*] Bắt đầu quét Devwork.vn [toàn bộ tin IT] - Chế độ: {mode_label} (Tối đa {scan_pages} trang)...")
 
-        for page in range(1, max_pages + 1):
-            if watermark_hit:
-                break
+        for page in range(1, scan_pages + 1):
+            collected_this_page = 0
 
             url = self._list_url(page)
-            print(f"   -> Đang tải trang tìm kiếm {page}/{max_pages}: {url}")
+            print(f"   -> Đang tải trang tìm kiếm {page}/{scan_pages}: {url}")
             html = self._make_request(url)
             if not html:
                 raise CrawlerSourceError(
@@ -475,17 +475,16 @@ class DevworkCrawler(BaseCrawler):
 
             for card in cards:
                 if is_incremental:
+                    # Skip just this card. Devwork interleaves paid listings, so the boundary card
+                    # is no evidence the rest of the page is old — ending here lost new jobs.
                     if last_record_id and str(card["job_id"]) == str(last_record_id):
-                        print(f"      🎯 [WATERMARK HIT] Chạm ranh giới tin cũ (Job ID: {card['job_id']}). Dừng quét!")
-                        watermark_hit = True
-                        self._empty_result_confirmed = True
-                        break
+                        print(f"      ↷ [MỐC] Bỏ qua tin đã cào {card['job_id']}, tiếp tục quét.")
+                        continue
                     if watermark_date and card["posted_iso"] and card["posted_iso"] < watermark_date:
-                        print(f"      🎯 [WATERMARK HIT] Tin đăng {card['posted_iso']} cũ hơn mốc {watermark_date}. Dừng quét!")
-                        watermark_hit = True
-                        self._empty_result_confirmed = True
-                        break
+                        print(f"      ↷ [MỐC] Bỏ qua tin đăng {card['posted_iso']} (mốc {watermark_date}).")
+                        continue
 
+                collected_this_page += 1
                 self.heartbeat()
                 detail_html = self._make_request(card["job_url"])
                 if detail_html:
@@ -500,9 +499,12 @@ class DevworkCrawler(BaseCrawler):
 
                 time.sleep(random.uniform(self.REQUEST_DELAY_MIN, self.REQUEST_DELAY_MAX))
 
-            if watermark_hit:
+            if collected_this_page == 0:
+                self._empty_result_confirmed = True
+                print(f"      [!] Trang {page} không còn tin mới. Dừng quét.")
                 break
-            time.sleep(random.uniform(0.8, 1.2))
+            if page < scan_pages:
+                time.sleep(random.uniform(0.8, 1.2))
 
     def _card_fallback_payload(self, card: Dict[str, Any]) -> Dict[str, Any]:
         """Zero data loss: trang chi tiết lỗi vẫn giữ trọn thông tin mức thẻ tin."""

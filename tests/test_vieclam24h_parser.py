@@ -259,7 +259,8 @@ class TestVieclam24hFetchJobs(unittest.TestCase):
         # One page of cards per page request; the window must not fabricate page 1.
         self.assertEqual(len(results), 9)
 
-    def test_incremental_stops_on_last_record_id(self):
+    def test_incremental_skips_the_boundary_card_and_keeps_scanning(self):
+        """The listing is ordered by paid priority, not by time: skip the boundary, don't stop."""
         items = self.crawler._parse_listing_page(self.list_html)["items"]
         cards = [self.crawler._normalize_job_card(i) for i in items]
         with patch.object(self.crawler, "_make_request", side_effect=self._mock()), \
@@ -268,8 +269,9 @@ class TestVieclam24hFetchJobs(unittest.TestCase):
                 mode="incremental", max_pages=1,
                 watermark_ts="2000-01-01T00:00:00Z",
                 last_record_id=cards[1]["job_id"]))
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["job_id"], cards[0]["job_id"])
+        ids = [r["job_id"] for r in results]
+        self.assertNotIn(cards[1]["job_id"], ids)
+        self.assertEqual(ids, [cards[0]["job_id"], cards[2]["job_id"]])
 
     def test_incremental_future_watermark_yields_nothing(self):
         with patch.object(self.crawler, "_make_request", side_effect=self._mock()), \

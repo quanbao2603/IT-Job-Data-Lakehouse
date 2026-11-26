@@ -23,6 +23,7 @@ from src.crawlers.base_crawler import (
     BaseCrawler,
     CrawlerSourceError,
     emit_cli_result,
+    incremental_scan_pages,
     require_listing_data,
 )
 
@@ -272,16 +273,14 @@ class ITViecCrawler(BaseCrawler):
         mode_label = "VÉT CẠN TOÀN BỘ (FULL BACKFILL)" if mode == "full" else "TĂNG TRƯỞNG (INCREMENTAL)"
         candidates_urls = []
         is_incremental = (mode == "incremental")
-        watermark_hit = False
         reported_total = None
 
-        print(f"[*] Bắt đầu quét ITViec - Chế độ: {mode_label} (Tối đa {max_pages} trang)...")
-        for page in range(1, max_pages + 1):
-            if watermark_hit:
-                break
+        scan_pages = incremental_scan_pages(mode, max_pages, getattr(self, "source_name", "source"))
+        print(f"[*] Bắt đầu quét ITViec - Chế độ: {mode_label} (Tối đa {scan_pages} trang)...")
+        for page in range(1, scan_pages + 1):
 
             url = self.SEARCH_URL.format(page=page)
-            print(f"   -> Đang tải trang tìm kiếm {page}/{max_pages}: {url}")
+            print(f"   -> Đang tải trang tìm kiếm {page}/{scan_pages}: {url}")
             html = self._make_request(url)
             if not html:
                 raise CrawlerSourceError(
@@ -308,10 +307,10 @@ class ITViecCrawler(BaseCrawler):
                     jid = self._extract_job_id(full_u)
 
                     if is_incremental and last_record_id and str(jid) == str(last_record_id):
-                        print(f"      🎯 [WATERMARK HIT] Chạm ranh giới tin cũ ITViec (Job ID: {jid}). Dừng quét!")
-                        watermark_hit = True
-                        self._empty_result_confirmed = True
-                        break
+                        # The listing is not guaranteed chronological, so the boundary card only
+                        # means "this one is old" — everything else on the page still counts.
+                        print(f"      ↷ [MỐC] Bỏ qua tin đã cào {jid}, tiếp tục quét trang.")
+                        continue
 
                     if full_u not in candidates_urls and full_u not in page_urls:
                         page_urls.append(full_u)
@@ -319,7 +318,7 @@ class ITViecCrawler(BaseCrawler):
             print(f"      [✓] Trang {page} phát hiện {len(page_urls)} tin thực tế mới.")
             self.heartbeat()
 
-            if not page_urls and not watermark_hit:
+            if not page_urls:
                 if page == 1:
                     require_listing_data(
                         getattr(self, "source_name", "itviec"),
@@ -331,15 +330,10 @@ class ITViecCrawler(BaseCrawler):
                 print(f"      [!] Đã hết tin phân trang tại trang {page}. Dừng quét.")
                 break
 
-            if watermark_hit:
-                self._empty_result_confirmed = True
-
             candidates_urls.extend(page_urls)
 
-            if watermark_hit:
-                break
-
-            time.sleep(random.uniform(0.8, 1.2))
+            if page < scan_pages:
+                time.sleep(random.uniform(0.8, 1.2))
 
         print(f"\n[*] TỔNG CỘNG PHÁT HIỆN: {len(candidates_urls)} tin tuyển dụng ITViec. BẮT ĐẦU CÀO STREAMING...")
         for idx, j_url in enumerate(candidates_urls, 1):

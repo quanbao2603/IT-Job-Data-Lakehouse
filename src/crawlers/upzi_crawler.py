@@ -22,6 +22,7 @@ from src.crawlers.base_crawler import (
     BaseCrawler,
     CrawlerSourceError,
     emit_cli_result,
+    incremental_scan_pages,
     require_listing_data,
 )
 
@@ -469,17 +470,16 @@ class UpziCrawler(BaseCrawler):
     ) -> Iterator[Dict[str, Any]]:
         mode_label = "VÉT CẠN TOÀN BỘ (FULL BACKFILL)" if mode == "full" else "TĂNG TRƯỞNG (INCREMENTAL)"
         is_incremental = (mode == "incremental")
-        watermark_hit = False
         watermark_date = watermark_ts[:10] if watermark_ts else ""
 
         print(f"[*] Bắt đầu quét Upzi [ma trận IT: {self.INDUSTRY_UUID[:8]}...] - Chế độ: {mode_label} (Tối đa {max_pages} trang)...")
 
-        for page in range(1, max_pages + 1):
-            if watermark_hit:
-                break
+        scan_pages = incremental_scan_pages(mode, max_pages, getattr(self, "source_name", "source"))
+        for page in range(1, scan_pages + 1):
+            collected_this_page = 0
 
             url = self._list_url(page)
-            print(f"   -> Đang tải trang tìm kiếm {page}/{max_pages}: {url}")
+            print(f"   -> Đang tải trang tìm kiếm {page}/{scan_pages}: {url}")
             html = self._make_request(url)
             if not html:
                 raise CrawlerSourceError(
@@ -513,18 +513,17 @@ class UpziCrawler(BaseCrawler):
 
             for card in cards:
                 if is_incremental:
+                    # Skip the boundary card only. Upzi's listing order is not a freshness proof,
+                    # so ending the crawl here dropped jobs approved after it.
                     if last_record_id and str(card["job_id"]) == str(last_record_id):
-                        print(f"      🎯 [WATERMARK HIT] Chạm ranh giới tin cũ Upzi (Job ID: {card['job_id']}). Dừng quét!")
-                        watermark_hit = True
-                        self._empty_result_confirmed = True
-                        break
+                        print(f"      ↷ [MỐC] Bỏ qua tin đã cào {card['job_id']}, tiếp tục quét.")
+                        continue
                     # Datetime guard: chỉ dừng khi approvedAt CỦ HƠN hẳn mốc (so sánh nghiêm ngặt <)
                     if watermark_date and card["approved_iso"] and card["approved_iso"] < watermark_date:
-                        print(f"      🎯 [WATERMARK HIT] Tin approved {card['approved_iso']} cũ hơn mốc {watermark_date}. Dừng quét!")
-                        watermark_hit = True
-                        self._empty_result_confirmed = True
-                        break
+                        print(f"      ↷ [MỐC] Tin approved {card['approved_iso']} cũ hơn mốc {watermark_date}.")
+                        continue
 
+                collected_this_page += 1
                 self.heartbeat()  # fetch-phase heartbeat trước mỗi lần tải trang chi tiết
                 detail_html = self._make_request(card["job_url"])
                 if detail_html:
@@ -539,9 +538,11 @@ class UpziCrawler(BaseCrawler):
 
                 time.sleep(random.uniform(self.REQUEST_DELAY_MIN, self.REQUEST_DELAY_MAX))
 
-            if watermark_hit:
+            if collected_this_page == 0:
+                print(f"      [!] Trang {page} không còn tin mới. Dừng quét.")
                 break
-            time.sleep(random.uniform(0.8, 1.2))
+            if page < scan_pages:
+                time.sleep(random.uniform(0.8, 1.2))
 
     def _card_fallback_payload(self, card: Dict[str, Any]) -> Dict[str, Any]:
         """Zero data loss: trang chi tiết lỗi vẫn giữ trọn thông tin mức thẻ tin."""

@@ -196,7 +196,12 @@ class TestDevworkFetchJobs(unittest.TestCase):
         self.assertEqual(len(results), 3)
         self.assertTrue(all(r["platform"] == "devwork" for r in results))
 
-    def test_incremental_stops_on_last_record_id(self):
+    def test_incremental_skips_the_boundary_card_and_keeps_scanning(self):
+        """Devwork interleaves paid listings, so the boundary card sits mid-page.
+
+        Ending the crawl there dropped the cards after it — the bug that left Devwork data
+        frozen for twelve days while the run still reported SUCCESS.
+        """
         items = self.crawler._parse_listing_page(self.list_html)["items"]
         cards = [self.crawler._normalize_job_card(i) for i in items]
         with patch.object(self.crawler, "_make_request", side_effect=self._mock()), \
@@ -205,8 +210,9 @@ class TestDevworkFetchJobs(unittest.TestCase):
                 mode="incremental", max_pages=1,
                 watermark_ts="2000-01-01T00:00:00Z",
                 last_record_id=cards[1]["job_id"]))
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["job_id"], cards[0]["job_id"])
+        ids = [r["job_id"] for r in results]
+        self.assertNotIn(cards[1]["job_id"], ids)
+        self.assertEqual(ids, [cards[0]["job_id"], cards[2]["job_id"]])
 
     def test_incremental_future_watermark_yields_nothing(self):
         with patch.object(self.crawler, "_make_request", side_effect=self._mock()), \

@@ -22,6 +22,7 @@ from src.crawlers.base_crawler import (
     BaseCrawler,
     CrawlerSourceError,
     emit_cli_result,
+    incremental_scan_pages,
     require_listing_data,
 )
 
@@ -420,12 +421,10 @@ class TopDevCrawler(BaseCrawler):
 
         seen_job_ids = set()
         scraped_jobs = []
-        watermark_hit = False
         reported_total = None
 
-        for page in range(1, max_pages + 1):
-            if watermark_hit:
-                break
+        scan_pages = incremental_scan_pages(mode, max_pages, getattr(self, "source_name", "source"))
+        for page in range(1, scan_pages + 1):
 
             search_url = self.SEARCH_BASE.format(page=page)
             print(f"   -> Đang tải trang tìm kiếm {page}/{max_pages}: {search_url}")
@@ -477,12 +476,11 @@ class TopDevCrawler(BaseCrawler):
             for item in page_jobs:
                 jid = item["job_id"]
 
-                # Kiểm tra Watermark: Gặp lại tin đã cào ở mốc trước
+                # Skip the boundary card only. Stopping here assumed a newest-first listing and
+                # silently dropped every job posted after it while the run still reported SUCCESS.
                 if mode == "incremental" and last_record_id and str(jid) == str(last_record_id):
-                    print(f"      🎯 [WATERMARK HIT] Chạm ranh giới tin cũ TopDev (Job ID: {jid}). Dừng quét!")
-                    watermark_hit = True
-                    self._empty_result_confirmed = True
-                    break
+                    print(f"      ↷ [MỐC] Bỏ qua tin đã cào {jid}, tiếp tục quét.")
+                    continue
 
                 if jid not in seen_job_ids:
                     seen_job_ids.add(jid)
@@ -494,8 +492,6 @@ class TopDevCrawler(BaseCrawler):
             print(f"      [✓] Trang {page}: Thu thập thành công {new_in_page} tin tuyển dụng IT mới.")
             self.heartbeat()
 
-            if watermark_hit:
-                break
             if new_in_page == 0:
                 print("      [!] Không có tin mới ở trang này; dừng phân trang để tránh vòng lặp.")
                 break

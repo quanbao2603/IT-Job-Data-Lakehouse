@@ -232,9 +232,11 @@ class TestVietnamDevsFetchJobsIncremental(CrossClassCrawlerMixin, unittest.TestC
                 last_record_id=stop_id
             ))
 
-        # Should yield only the first card
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["job_id"], cards[0]["job_id"])
+        # The boundary card is skipped, the cards after it are still collected.
+        ids = [r["job_id"] for r in results]
+        self.assertNotIn(stop_id, ids)
+        self.assertIn(cards[0]["job_id"], ids)
+        self.assertIn(cards[2]["job_id"], ids)
 
     def test_incremental_future_watermark_stops_after_first_old_card(self):
         """Watermark in the future → cards with posted_iso < watermark stop the crawl.

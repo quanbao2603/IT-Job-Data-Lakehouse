@@ -179,7 +179,13 @@ class TestCareerVietFetchJobsIncremental(CrossClassCrawlerMixin, unittest.TestCa
         self.assertEqual(len(ids), 4)
         self.assertTrue(any("-trang-" not in c and "/viec-lam/" in c for c in calls))
 
-    def test_incremental_stops_on_last_record_id(self):
+    def test_incremental_skips_the_boundary_card_without_ending_the_crawl(self):
+        """The boundary card means 'this one is old', not 'everything after it is old'.
+
+        CareerViet (like the other listing sites) does not guarantee a newest-first order, so
+        ending the crawl at the boundary dropped every job posted after it while the run still
+        reported SUCCESS.
+        """
         cards = self.crawler._parse_cards(self.list_html)
         first_id = cards[0]["job_id"]
         stop_mark = cards[2]["job_id"]
@@ -189,20 +195,28 @@ class TestCareerVietFetchJobsIncremental(CrossClassCrawlerMixin, unittest.TestCa
 
         with patch.object(self.crawler, "_make_request", side_effect=fake_request), \
              patch("src.crawlers.careerviet_crawler.time.sleep", return_value=None):
-            ids = self._record_ids(mode="incremental", max_pages=3, last_record_id=stop_mark)
+            ids = self._record_ids(mode="incremental", max_pages=1, last_record_id=stop_mark)
         self.assertEqual(ids[0], first_id)
-        self.assertEqual(len(ids), 2)  # dừng đúng trước watermark, không cào thêm
+        self.assertNotIn(stop_mark, ids)
+        self.assertGreater(len(ids), 2, "các thẻ sau mốc vẫn phải được cào")
 
-    def test_incremental_stops_on_datetime_guard(self):
+    def test_incremental_skips_old_cards_but_keeps_undated_ones(self):
+        """A card older than the watermark is skipped; a card with no date is kept.
+
+        Keeping the undated card is deliberate: it may be the newest posting of the day, and a
+        duplicate observation is cheaper than a missed job (Silver supersedes repeats).
+        """
+        cards = self.crawler._parse_cards(self.list_html)
+        undated = {c["job_id"] for c in cards if not c["updated_iso"]}
+
         def fake_request(url, **kw):
             return self.list_html if "/viec-lam/" in url and "tim-viec-lam" not in url else self.detail_html
 
-        # Mốc watermark TƯƠNG LAI (2026-12-31): mọi thẻ có updated 2026-11-14 < mốc
-        # → dừng ngay thẻ đầu tiên, không yield tin nào (guard chạy TRƯỚC khi tải chi tiết).
         with patch.object(self.crawler, "_make_request", side_effect=fake_request), \
              patch("src.crawlers.careerviet_crawler.time.sleep", return_value=None):
-            ids = self._record_ids(mode="incremental", max_pages=3, watermark_ts="2026-12-31T00:00:00Z")
-        self.assertEqual(ids, [])
+            ids = self._record_ids(mode="incremental", max_pages=1, watermark_ts="2026-12-31T00:00:00Z")
+        self.assertTrue(ids)
+        self.assertTrue(set(ids).issubset(undated), f"chỉ giữ thẻ không có ngày, nhận {ids}")
 
     def test_datetime_guard_keeps_same_day_cards(self):
         def fake_request(url, **kw):

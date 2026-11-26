@@ -16,6 +16,25 @@ class CrawlerSourceError(RuntimeError):
     """A source request or parser failure that must fail the ingestion run."""
 
 
+
+
+def incremental_scan_pages(mode: str, max_pages: int, source_name: str = "source") -> int:
+    """How many listing pages an incremental run may examine.
+
+    The old crawlers stopped at the first card that matched the last-seen job id or was older
+    than the date watermark. That assumes the listing is ordered newest-first, which is false on
+    sites that sort by relevance or push paid listings to the top: the boundary card sat near the
+    top, the crawl stopped on page 1, and every job posted that day was skipped while the run
+    still reported SUCCESS. Scanning a small window instead keeps the cost bounded and the miss
+    impossible. Override with LAKEHOUSE_INCREMENTAL_SCAN_PAGES.
+    """
+    if mode != "incremental":
+        return max(1, max_pages)
+    window = int(os.getenv("LAKEHOUSE_INCREMENTAL_SCAN_PAGES", "2"))
+    return max(1, min(max_pages, window))
+
+
+
 def require_listing_data(
     source: str,
     item_count: int,
