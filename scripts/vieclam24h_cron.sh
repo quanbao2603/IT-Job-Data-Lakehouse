@@ -37,7 +37,7 @@ case "$status" in
       echo "$out" | tail -5
     fi
     ;;
-  BLOCKED|PROGRESS|COOLDOWN|COMPLETED)
+  BLOCKED|PROGRESS|COOLDOWN|COMPLETED|REBUILD_ONLY|NOOP)
     : # im lặng: vẫn bị chặn, đang thu thập dần, hoặc vừa xong nên đang chờ
     ;;
   *)

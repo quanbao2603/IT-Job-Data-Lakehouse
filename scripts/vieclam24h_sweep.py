@@ -34,6 +34,20 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def plan_next(done_pages: list[int], total: int, per_run: int) -> tuple[str, list[int]]:
+    """Decide what this tick does: crawl a slice, rebuild, or nothing.
+
+    The old code treated "no pages left" as "start over", so a failed rebuild re-crawled the
+    whole listing every hour forever. A complete page set now means rebuild-only.
+    """
+    missing = [p for p in range(1, total + 1) if p not in done_pages]
+    if missing:
+        return "crawl", missing[:per_run]
+    if len(done_pages) >= total:
+        return "rebuild", []
+    return "crawl", []
+
+
 def load_state() -> dict:
     if STATE_PATH.exists():
         try:
@@ -86,15 +100,28 @@ def run_crawler(page_start: int, pages: int, gap: float) -> tuple[int, dict]:
     return completed.returncode, payload
 
 
+REBUILD_LOG = PROJECT_ROOT / "data" / "operational" / "vieclam24h_rebuild.log"
+
+
+def _log(text: str) -> None:
+    REBUILD_LOG.parent.mkdir(parents=True, exist_ok=True)
+    stamp = now().strftime("%Y-%m-%d %H:%M:%S")
+    with REBUILD_LOG.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{stamp}] {text}\n")
+
+
 def rebuild() -> int:
     """Silver replay + Gold publish happen once per completed sweep, never per slice."""
+    _log("rebuild start")
     replay = subprocess.run(
         [PYTHON, "scripts/replay_silver.py", "--run-id", f"manual_vsl_sweep_{now():%Y%m%d}"],
         cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=7200,
     )
     if replay.returncode != 0:
+        _log(f"replay failed: {(replay.stderr or replay.stdout)[-800:]}")
         print(replay.stdout[-500:], replay.stderr[-500:])
         return 5
+    _log("replay ok")
     release_id = f"gold_{now():%Y%m%d_%H%M}_vsl"
     gold = subprocess.run(
         [PYTHON, "-m", "src.gold.run_gold_mart",
@@ -102,8 +129,10 @@ def rebuild() -> int:
         cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=3600,
     )
     if gold.returncode != 0:
+        _log(f"gold failed: {(gold.stderr or gold.stdout)[-800:]}")
         print(gold.stdout[-500:], gold.stderr[-500:])
         return 5
+    _log(f"gold published: {release_id}")
     print(gold.stdout.strip().splitlines()[-1] if gold.stdout.strip() else release_id)
     return 0
 
@@ -135,10 +164,26 @@ def main(argv: list[str] | None = None) -> int:
         state = {"sweep_id": f"sweep_{now():%Y%m%d_%H%M}", "started_at": now().isoformat(),
                  "completed_at": None, "done_pages": [], "runs": state.get("runs", [])[-5:]}
 
-    remaining = [p for p in range(1, args.total_pages + 1) if p not in state["done_pages"]]
-    if not remaining:
-        remaining = list(range(1, args.total_pages + 1))
-        state["done_pages"] = []
+    action, slice_pages = plan_next(state["done_pages"], args.total_pages, args.pages_per_run)
+
+    if action == "rebuild":
+        # Every page is already in Bronze; only the Silver/Gold rebuild is outstanding.
+        print(json.dumps({"status": "REBUILD_ONLY", "pages": len(state["done_pages"])}, ensure_ascii=False))
+        rebuild_exit = rebuild()
+        if rebuild_exit != 0:
+            state["last_error"] = f"rebuild exit {rebuild_exit} at {now().isoformat()}"
+            save_state(state)
+            print(json.dumps({"status": "REBUILD_FAILED", "exit": rebuild_exit}, ensure_ascii=False))
+            return 5
+        state["completed_at"] = now().isoformat()
+        state["last_error"] = None
+        save_state(state)
+        print(json.dumps({"status": "PUBLISHED", "completed_at": state["completed_at"]}, ensure_ascii=False))
+        return 0
+
+    if not slice_pages:
+        print(json.dumps({"status": "NOOP"}, ensure_ascii=False))
+        return 0
 
     if not site_answers():
         print(json.dumps({"status": "BLOCKED", "sweep_id": state["sweep_id"],
@@ -147,11 +192,11 @@ def main(argv: list[str] | None = None) -> int:
         save_state(state)
         return 3
 
-    page_start = remaining[0]
-    pages = min(args.pages_per_run, len(remaining))
+    page_start = slice_pages[0]
+    count = len(slice_pages)
     started = now()
-    exit_code, payload = run_crawler(page_start, pages, args.gap)
-    entry = {"at": started.isoformat(), "from": page_start, "pages": pages,
+    exit_code, payload = run_crawler(page_start, count, args.gap)
+    entry = {"at": started.isoformat(), "from": page_start, "pages": count,
              "exit": exit_code, "records": payload.get("records_ingested")}
     state["runs"] = (state.get("runs") or [])[-9:] + [entry]
 
@@ -160,14 +205,14 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "CRAWL_FAILED", **entry}, ensure_ascii=False))
         return 4
 
-    for page in range(page_start, page_start + pages):
+    for page in range(page_start, page_start + count):
         if page not in state["done_pages"]:
             state["done_pages"].append(page)
     state["done_pages"].sort()
     save_state(state)
 
     if len(state["done_pages"]) < args.total_pages:
-        print(json.dumps({"status": "PROGRESS", "from": page_start, "pages": pages,
+        print(json.dumps({"status": "PROGRESS", "from": page_start, "pages": count,
                           "done": len(state["done_pages"]), "total": args.total_pages,
                           "records": payload.get("records_ingested")}, ensure_ascii=False))
         return 0
