@@ -332,16 +332,16 @@ class EntityResolver:
                 self._record_link(observation, result, previous_unified_job_id=previous_unified_id)
                 return result
             if decision is not None and decision["decision"] == "REJECT":
-                # Reviewed and kept apart: do not ask again, and do not merge.
-                return self._create_distinct(
-                    observation,
-                    observed_at,
-                    fingerprint,
-                    canonical_url,
-                    "FUZZY_TITLE_COMPANY_LOCATION",
-                    score,
-                    previous_unified_id,
+                # Reviewed and kept apart. This matches what resolve_review() already wrote for the
+                # observation (no unified_job_id), so the decision is stable across replays and the
+                # published cohort does not silently grow by every rejected near-duplicate.
+                result = MatchResult(
+                    None, None, "FUZZY_TITLE_COMPANY_LOCATION", score, "UNMATCHED",
+                    "Đã duyệt: giữ riêng khỏi entity ứng viên",
                 )
+                self._record_observation(observation, None, canonical_url)
+                self._record_link(observation, result, previous_unified_job_id=previous_unified_id)
+                return result
             result = MatchResult(None, candidate["unified_job_id"], "FUZZY_TITLE_COMPANY_LOCATION", score, "REVIEW_REQUIRED", REVIEW_REASON)
             self._record_observation(observation, None, canonical_url)
             self._record_link(observation, result, previous_unified_job_id=previous_unified_id)

@@ -65,6 +65,23 @@ class TestReviewDecisionLifetime(unittest.TestCase):
         self.assertNotEqual(again.match_status, "REVIEW_REQUIRED")
         self.assertEqual(again.unified_job_id, first.candidate_entity_id)
 
+    def test_reject_does_not_invent_a_new_entity_on_replay(self):
+        """A rejected near-duplicate must not become a job: that grew the cohort by 298 rows."""
+        first = self.resolver.resolve(dict(OBSERVATION), OBSERVATION["observed_at"])
+        self.registry.resolve_review(
+            observation_id=OBSERVATION["observation_id"],
+            resolution_version="v1",
+            decision="REJECT",
+            reviewer="test",
+        )
+        before = self.registry.get_entity_count() if hasattr(self.registry, "get_entity_count") else None
+        entities_before = len(list(self.registry.list_entities()))
+        again = self.resolver.resolve(dict(OBSERVATION), OBSERVATION["observed_at"])
+        entities_after = len(list(self.registry.list_entities()))
+        self.assertEqual(again.match_status, "UNMATCHED")
+        self.assertIsNone(again.unified_job_id)
+        self.assertEqual(entities_after, entities_before, "REJECT không được tạo entity mới")
+
     def test_reject_decision_keeps_the_job_separate_without_asking_again(self):
         first = self.resolver.resolve(dict(OBSERVATION), OBSERVATION["observed_at"])
         self.assertEqual(first.match_status, "REVIEW_REQUIRED")
