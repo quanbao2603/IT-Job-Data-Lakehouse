@@ -31,7 +31,11 @@ SOURCES = (
     "upzi", "vieclam24h", "vietnamdevs", "vietnamworks",
 )
 AGE_DAYS = max(int(os.environ.get("LAKEHOUSE_COMPACTION_AGE_DAYS", "2")), 1)
-MIN_FILES = max(int(os.environ.get("LAKEHOUSE_COMPACTION_MIN_FILES", "7")), 2)
+# Two files is the real threshold: a daily run writes one or two files per source, so the old
+# seven-file rule skipped every partition forever and compaction_audit_logs stayed empty.
+MIN_FILES = max(int(os.environ.get("LAKEHOUSE_COMPACTION_MIN_FILES", "2")), 2)
+# Walk back over a window so a missed night drains the next night instead of ageing out.
+WINDOW_DAYS = max(int(os.environ.get("LAKEHOUSE_COMPACTION_WINDOW_DAYS", "14")), 1)
 
 
 def _run_compaction(**context: Any) -> dict[str, Any]:
@@ -39,7 +43,9 @@ def _run_compaction(**context: Any) -> dict[str, Any]:
     from src.storage.compaction_plan import target_partition_prefixes
 
     logical_date = context["logical_date"].date().isoformat()
-    prefixes = target_partition_prefixes(logical_date, SOURCES, age_days=AGE_DAYS)
+    prefixes = target_partition_prefixes(
+        logical_date, SOURCES, age_days=AGE_DAYS, window_days=WINDOW_DAYS
+    )
     engine = CompactionEngine(state_db_path=STATE_DB)
     results = []
     for prefix in prefixes:
@@ -54,6 +60,7 @@ def _run_compaction(**context: Any) -> dict[str, Any]:
         "status": "SUCCESS",
         "logical_date": logical_date,
         "age_days": AGE_DAYS,
+        "window_days": WINDOW_DAYS,
         "min_files_threshold": MIN_FILES,
         "results": results,
         "compacted_count": sum(1 for item in results if item.get("status") == "COMPACTED"),

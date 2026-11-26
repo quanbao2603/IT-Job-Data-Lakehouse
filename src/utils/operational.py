@@ -18,6 +18,28 @@ _SECRET_PATTERNS = (
 )
 
 
+_ALERT_ENV_CANDIDATES = (
+    "/home/womcloud/airflow/airflow.env",
+    "/home/womcloud/services/it-insight/config/web.env",
+)
+
+
+def _load_alert_env() -> None:
+    """Pick up alert settings written after the scheduler started.
+
+    Airflow reads EnvironmentFile= once at boot, so a token added later would never reach a
+    running scheduler and every alert would be silently dropped. Reading the file lazily makes
+    enabling alerts a config change instead of a service restart (which needs root here).
+    """
+    if os.getenv("ALERT_ENABLED") is not None:
+        return
+    from src.storage.atomic_writer import load_env_file
+
+    for candidate in _ALERT_ENV_CANDIDATES:
+        if os.path.isfile(candidate):
+            load_env_file(candidate)
+
+
 def redact_message(message: Any, max_length: int = 500) -> str:
     """Remove credentials, headers, HTML and oversized payloads from messages."""
     value = html.unescape(str(message))
@@ -77,6 +99,7 @@ def classify_failure(message: Any) -> str:
 
 def send_alert(message: str, *, context: Optional[Dict[str, Any]] = None) -> bool:
     """Send one redacted Telegram or Discord alert; disabled unless explicitly enabled."""
+    _load_alert_env()
     if os.getenv("ALERT_ENABLED", "false").lower() != "true":
         return False
     body = redact_message(message)
@@ -105,6 +128,7 @@ def send_alert(message: str, *, context: Optional[Dict[str, Any]] = None) -> boo
 
 def alert_configuration_status() -> Dict[str, Any]:
     """Return non-secret alert readiness for preflight and operator reports."""
+    _load_alert_env()
     enabled = os.getenv("ALERT_ENABLED", "false").lower() == "true"
     if not enabled:
         return {"enabled": False, "ready": False, "reason": "ALERT_ENABLED=false"}

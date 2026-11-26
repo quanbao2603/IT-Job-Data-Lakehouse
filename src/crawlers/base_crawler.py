@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, Iterable
 from src.storage.state_manager import StateManager
 from src.storage.atomic_writer import AtomicWriter
 from src.storage.metadata_envelope import MetadataEnvelope
+from src.storage.raw_capture import RawCapture
 from src.utils.operational import append_failure_event, classify_failure
 
 
@@ -71,7 +72,33 @@ class BaseCrawler(abc.ABC):
         self.state_manager = StateManager()
         self.writer = AtomicWriter()
         self._current_run_id: Optional[str] = None
+        self.raw_capture = RawCapture()
+        self._install_raw_capture()
         self._empty_result_confirmed = False
+
+    def _install_raw_capture(self) -> None:
+        """Wrap the subclass request method so every response is archived before parsing.
+
+        Doing it here instead of in nine crawlers means a new crawler gets raw capture for free
+        and cannot forget it. Capture errors are swallowed inside RawCapture, never here.
+        """
+        impl = self._make_request
+
+        def wrapped(url, *args, **kwargs):
+            response = impl(url, *args, **kwargs)
+            if response:
+                lowered = str(url)
+                kind = "listing" if any(tok in lowered for tok in ("page=", "/page/", "?p=")) else "detail"
+                self.raw_capture.capture(
+                    source=getattr(self, "source_name", "unknown"),
+                    url=lowered,
+                    body=response,
+                    kind=kind,
+                    run_id=self._current_run_id,
+                )
+            return response
+
+        self._make_request = wrapped  # type: ignore[assignment]
 
     def heartbeat(self) -> bool:
         """Refresh the active run lease during fetch or write progress."""

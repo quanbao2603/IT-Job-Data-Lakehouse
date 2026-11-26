@@ -70,12 +70,34 @@ class TestOperationalWorkflows(unittest.TestCase):
             self.assertEqual(registry.get_link("obs-1", "v1")["match_status"], "MANUAL_MATCH")
 
     def test_alert_configuration_reports_missing_delivery_secret(self):
-        from src.utils.operational import alert_configuration_status
+        """With no env anywhere — including the on-disk env file — alerts are simply off."""
+        from src.utils import operational
 
-        with mock.patch.dict(os.environ, {}, clear=True):
-            result = alert_configuration_status()
+        with mock.patch.dict(os.environ, {}, clear=True), \
+             mock.patch.object(operational, "_ALERT_ENV_CANDIDATES", ()):
+            result = operational.alert_configuration_status()
         self.assertFalse(result["enabled"])
         self.assertEqual(result["reason"], "ALERT_ENABLED=false")
+
+    def test_alert_reads_settings_written_after_the_process_started(self):
+        """Airflow reads EnvironmentFile only at boot; a later token must still reach alerts."""
+        import tempfile
+
+        from src.utils import operational
+
+        with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as handle:
+            handle.write("ALERT_ENABLED=true\nALERT_CHANNEL=telegram\n")
+            handle.write("TELEGRAM_BOT_TOKEN=placeholder-token\nTELEGRAM_CHAT_ID=12345\n")
+            path = handle.name
+        try:
+            with mock.patch.dict(os.environ, {}, clear=True), \
+                 mock.patch.object(operational, "_ALERT_ENV_CANDIDATES", (path,)):
+                result = operational.alert_configuration_status()
+        finally:
+            os.unlink(path)
+        self.assertTrue(result["enabled"])
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["channel"], "telegram")
 
 
 if __name__ == "__main__":
