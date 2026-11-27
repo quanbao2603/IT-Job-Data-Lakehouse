@@ -66,10 +66,23 @@ export type DashboardResponse = {
 }
 export type JobsResponse = { meta: Meta; items: Job[]; total: number; page: number; page_size: number }
 export type SkillsResponse = { meta: Meta; items: { skill_code: string; skill_name: string; job_count: number }[]; pairs: { skill_a: string; skill_a_name: string; skill_b: string; skill_b_name: string; job_count: number }[] }
+export type MomentumRow = {
+  code: string
+  label: string
+  recent: number
+  previous: number
+  delta: number
+  recent_share: number
+  previous_share: number
+  delta_pp: number
+}
 export type TrendsResponse = {
   meta: Meta
   weeks: { week_start: string; jobs: number; salary_samples: number; salary_median: number | null }[]
   snapshots: { snapshot_date: string; jobs: number }[]
+  skills_momentum: MomentumRow[]
+  domains_momentum: MomentumRow[]
+  window: { recent_days: number; recent_jobs: number; previous_jobs: number }
 }
 export type CompanyProfile = {
   company_key: string

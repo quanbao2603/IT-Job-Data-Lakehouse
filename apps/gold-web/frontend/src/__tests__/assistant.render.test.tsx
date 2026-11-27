@@ -122,6 +122,8 @@ async function askQuestion(question: string) {
   return { user, input }
 }
 
+beforeEach(() => { localStorage.clear() })
+
 describe('assistant rendering (stubbed API)', () => {
   beforeEach(() => {
     fixture.handler.ask = async () => fixture.ANSWER

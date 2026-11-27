@@ -674,7 +674,101 @@ class GoldRepository:
             snapshots = [
                 {"snapshot_date": str(row[0]), "jobs": int(row[1])} for row in cursor.fetchall()
             ]
-            payload = {"weeks": weeks, "snapshots": snapshots}
+            # Momentum: what the market asked for in the last 14 days versus the 14 before that.
+            # A count alone cannot say what is rising, which is the question this page exists for.
+            timeout_ms = getattr(self.settings, "query_timeout_ms", 15000)
+            if timeout_ms:
+                cursor.execute(f"SET LOCAL statement_timeout = {int(timeout_ms)}")
+
+            cursor.execute(
+                """
+                SELECT count(*) FILTER (WHERE j.canonical_posted_date >= CURRENT_DATE - 13)::int,
+                       count(*) FILTER (WHERE j.canonical_posted_date < CURRENT_DATE - 13)::int
+                FROM gold.v_job_snapshot s
+                JOIN gold.dim_job j ON j.job_key = s.job_key
+                WHERE j.canonical_posted_date >= CURRENT_DATE - 27
+                  AND j.canonical_posted_date <= CURRENT_DATE
+                """
+            )
+            recent_jobs, previous_jobs = cursor.fetchone()
+            recent_total = max(1, int(recent_jobs or 0))
+            previous_total = max(1, int(previous_jobs or 0))
+
+            def momentum(column_sql: str, group_sql: str, code_sql: str, label_sql: str, limit: int,
+                         min_recent: int) -> list[dict[str, Any]]:
+                cursor.execute(
+                    f"""
+                    SELECT {code_sql} AS code, {label_sql} AS label,
+                           count(DISTINCT s.unified_job_id) FILTER (
+                               WHERE j.canonical_posted_date >= CURRENT_DATE - 13)::int AS recent,
+                           count(DISTINCT s.unified_job_id) FILTER (
+                               WHERE j.canonical_posted_date < CURRENT_DATE - 13)::int AS previous
+                    FROM gold.v_job_snapshot s
+                    JOIN gold.dim_job j ON j.job_key = s.job_key
+                    {group_sql}
+                    WHERE j.canonical_posted_date >= CURRENT_DATE - 27
+                      AND j.canonical_posted_date <= CURRENT_DATE
+                      {column_sql}
+                    GROUP BY 1, 2
+                    ORDER BY recent DESC, label ASC
+                    LIMIT {int(limit * 4)}
+                    """
+                )
+                rows = []
+                for code, label, recent, previous in cursor.fetchall():
+                    if recent < min_recent:
+                        continue
+                    # Share of the window, not raw count: the recent window covers fewer postings
+                    # than the one before it (collection started mid-month), so absolute deltas
+                    # would report the whole market as falling. Share is comparable across windows.
+                    recent_share = round(100 * recent / recent_total, 2)
+                    previous_share = round(100 * previous / previous_total, 2)
+                    rows.append({
+                        "code": code,
+                        "label": label,
+                        "recent": int(recent),
+                        "previous": int(previous),
+                        "delta": int(recent) - int(previous),
+                        "recent_share": recent_share,
+                        "previous_share": previous_share,
+                        "delta_pp": round(recent_share - previous_share, 2),
+                    })
+                # Rising first, then by volume: the reader wants the movers, not the biggest base.
+                rows.sort(key=lambda item: (-item["delta_pp"], -item["recent"], item["label"]))
+                return rows[:limit]
+
+            skill_momentum = momentum(
+                column_sql="AND NOT d.is_unknown",
+                group_sql=(
+                    "JOIN gold.v_job_skill f ON f.unified_job_id = s.unified_job_id "
+                    "AND f.snapshot_date = s.snapshot_date "
+                    "JOIN gold.dim_skill d ON d.skill_key = f.skill_key"
+                ),
+                code_sql="d.skill_code",
+                label_sql="d.skill_name",
+                limit=12,
+                min_recent=3,
+            )
+            domain_momentum = momentum(
+                column_sql="AND j.job_domain IS NOT NULL AND j.job_domain <> 'UNKNOWN'",
+                group_sql="",
+                code_sql="j.job_domain",
+                label_sql="j.job_domain",
+                limit=8,
+                min_recent=1,
+            )
+
+            payload = {
+                "weeks": weeks,
+                "snapshots": snapshots,
+                "skills_momentum": skill_momentum,
+                "domains_momentum": domain_momentum,
+                "window": {
+                    "recent_days": 14,
+                    "recent_jobs": int(recent_jobs or 0),
+                    "previous_jobs": int(previous_jobs or 0),
+                },
+            }
             return self._with_context(context, payload)
 
     def quality(self, params: FilterParams | None = None) -> dict[str, Any]:

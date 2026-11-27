@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { prettyCompany, prettyText } from './format'
+import { clearChat, loadChat, saveChat, type ChatMessage } from './chatStore'
 import {
   AlertCircle, ArrowRight, Bot, Building2, BriefcaseBusiness, CheckCircle2, Coins,
   ChevronDown, Download, ExternalLink, Info, LayoutDashboard, Lock, RefreshCw, Search, ShieldCheck,
@@ -35,7 +36,7 @@ const PAGE_ICONS: Record<Page, React.ReactNode> = {
 }
 const PAGE_SUBTITLES: Record<Page, string> = {
   overview: 'Bức tranh tổng quan từ release Gold đang được công bố.',
-  trends: 'Nhịp đăng tin theo tuần và lịch sử các lần cập nhật dữ liệu.',
+  trends: 'Kỹ năng và chuyên môn đang lên, kèm nhịp đăng tin theo tuần.',
   jobs: 'Tìm kiếm và khám phá những tin mà hệ thống đã ghi nhận.',
   skills: 'Kỹ năng nào xuất hiện trong tin tuyển dụng và thường đi cùng nhau.',
   companies: 'Cơ cấu tin tuyển dụng của từng doanh nghiệp trong dữ liệu đang công bố.',
@@ -418,7 +419,7 @@ export default function App() {
         {!error && busy && !snapshot && <div className="state-card" role="status"><RefreshCw className="spin" aria-hidden /> Đang tải dữ liệu…</div>}
         {!error && snapshot && <div className={busy ? 'refreshing' : undefined}>
           {page === 'overview' && snapshot.dashboard && <Overview data={snapshot.dashboard} onCompany={drillToCompany} onSkill={drillToSkill} />}
-          {page === 'trends' && snapshot.trends && <Trends data={snapshot.trends} />}
+          {page === 'trends' && snapshot.trends && <Trends data={snapshot.trends} onSkill={drillToSkill} />}
           {page === 'jobs' && snapshot.jobs && <Jobs
             data={snapshot.jobs}
             sort={filters.sort ?? 'recent'}
@@ -610,13 +611,13 @@ function Overview({ data, onCompany, onSkill }: { data: DashboardResponse; onCom
   </>
 }
 
-function Metric({ icon, tone, label, value, unit, note }: { icon: React.ReactNode; tone: string; label: string; value: string; unit?: string; note: string }) {
+function Metric({ icon, tone, label, value, unit, note, textual }: { icon: React.ReactNode; tone: string; label: string; value: string; unit?: string; note: string; textual?: boolean }) {
   return <div className="metric-card">
     <div className="metric-top">
       <span className="metric-label">{label}</span>
       <span className={`metric-icon ${tone}`}>{icon}</span>
     </div>
-    <strong>{value}{unit && <span className="metric-unit">{unit}</span>}</strong>
+    <strong className={textual ? 'textual' : undefined}>{value}{unit && <span className="metric-unit">{unit}</span>}</strong>
     <small>{note}</small>
   </div>
 }
@@ -932,38 +933,92 @@ function Companies({ data, onSelect, onPage }: { data: CompaniesResponse; onSele
   </>
 }
 
-function Trends({ data }: { data: TrendsResponse }) {
+function MomentumList({ rows, empty, onSelect }: {
+  rows: TrendsResponse['skills_momentum']
+  empty: string
+  onSelect?: (code: string) => void
+}) {
+  if (rows.length === 0) return <p className="muted" style={{ padding: '0 21px 18px' }}>{empty}</p>
+  const maxShare = Math.max(1, ...rows.map((row) => row.recent_share))
+  return <div className="momentum-list">
+    {rows.map((row) => {
+      const rising = row.delta_pp > 0
+      const flat = Math.abs(row.delta_pp) < 0.2
+      return <div className={`momentum-row${onSelect ? ' clickable' : ''}`} key={row.code}
+        role={onSelect ? 'button' : undefined}
+        tabIndex={onSelect ? 0 : undefined}
+        onClick={onSelect ? () => onSelect(row.code) : undefined}
+        onKeyDown={onSelect ? (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onSelect(row.code)
+          }
+        } : undefined}
+      >
+        <span className="momentum-name">{row.label}</span>
+        <span className="momentum-bar" aria-hidden>
+          <i style={{ width: `${Math.max(4, (row.recent_share / maxShare) * 100)}%` }} />
+        </span>
+        <span className="momentum-count">{number.format(row.recent)} tin</span>
+        <span className="momentum-share">{row.recent_share.toLocaleString('vi-VN')}%</span>
+        <span className={`momentum-delta ${flat ? 'flat' : rising ? 'up' : 'down'}`}>
+          {flat ? 'đi ngang' : `${rising ? '▲' : '▼'} ${Math.abs(row.delta_pp).toLocaleString('vi-VN')} điểm`}
+        </span>
+      </div>
+    })}
+  </div>
+}
+
+function Trends({ data, onSkill }: { data: TrendsResponse; onSkill: (code: string) => void }) {
   const weeks = data.weeks
-  // The first crawl week carries every job ever seen, so plotting all 26 weeks flattens the
-  // recent bars into the baseline. A quarter keeps the shape readable; KPIs still use everything.
+  const window = data.window
+  const skills = data.skills_momentum
+  const domains = data.domains_momentum
+  const topSkill = skills[0]
+  const topDomain = domains[0]
+  const mostMentioned = [...skills].sort((a, b) => b.recent - a.recent)[0]
+  const jobDelta = window.recent_jobs - window.previous_jobs
+  // The first crawl week carries every job ever seen, so a quarter is what stays readable.
   const chartWeeks = weeks.slice(-13)
-  // One bulk-load week (the first crawl) can dwarf every real week and flatten the rest into
-  // the baseline. Cap the scale at the second-largest value and mark the clipped bar, so the
-  // chart stays readable without hiding the outlier.
   const sorted = [...chartWeeks].map((w) => w.jobs).sort((a, b) => b - a)
   const outlier = sorted.length > 1 && sorted[0] > sorted[1] * 4 ? sorted[0] : null
   const max = Math.max(1, outlier ? sorted[1] : sorted[0])
-  const lastFour = weeks.slice(-4)
-  const avg = lastFour.length ? Math.round(lastFour.reduce((sum, w) => sum + w.jobs, 0) / lastFour.length) : 0
-  const latest = weeks[weeks.length - 1]
-  const withSalary = weeks.filter((w) => w.salary_samples > 0)
+
   return <>
     <ReleaseNote meta={data.meta} />
     <div className="metric-grid">
-      <Metric icon={<TrendingUp size={18} aria-hidden />} tone="green" label="Tuần gần nhất"
-        value={latest ? number.format(latest.jobs) : '—'} note={latest ? `tuần bắt đầu ${formatDay(latest.week_start)}` : 'chưa có dữ liệu'} />
-      <Metric icon={<BriefcaseBusiness size={18} aria-hidden />} tone="blue" label="Trung bình 4 tuần"
-        value={number.format(avg)} note={`trên ${lastFour.length} tuần gần nhất`} />
-      <Metric icon={<Coins size={18} aria-hidden />} tone="amber" label="Tuần nhiều tin nhất"
-        value={number.format(Math.max(...weeks.map((w) => w.jobs), 0))}
-        note={weeks.length ? formatDay(weeks.reduce((best, w) => (w.jobs > best.jobs ? w : best), weeks[0]).week_start) : '—'} />
-      <Metric icon={<Tags size={18} aria-hidden />} tone="violet" label="Tuần có dữ liệu lương"
-        value={`${withSalary.length}/${weeks.length}`} note="tuần có ít nhất một mẫu lương" />
+      <Metric textual icon={<TrendingUp size={18} aria-hidden />} tone="green" label="Kỹ năng lên nhanh nhất"
+        value={topSkill ? prettyText(topSkill.label) : '—'}
+        note={topSkill ? `tăng ${topSkill.delta_pp.toLocaleString('vi-VN')} điểm tỷ trọng · ${number.format(topSkill.recent)} tin` : 'chưa đủ dữ liệu'} />
+      <Metric textual icon={<BriefcaseBusiness size={18} aria-hidden />} tone="blue" label="Chuyên môn lên nhanh nhất"
+        value={topDomain ? prettyText(topDomain.label) : '—'}
+        note={topDomain ? `tăng ${topDomain.delta_pp.toLocaleString('vi-VN')} điểm · ${number.format(topDomain.recent)} tin` : 'chưa đủ dữ liệu'} />
+      <Metric textual icon={<Tags size={18} aria-hidden />} tone="violet" label="Kỹ năng được nhắc nhiều nhất"
+        value={mostMentioned ? prettyText(mostMentioned.label) : '—'}
+        note={mostMentioned ? `${number.format(mostMentioned.recent)} tin trong 14 ngày` : 'chưa đủ dữ liệu'} />
+      <Metric icon={<Coins size={18} aria-hidden />} tone="amber" label="Tin đăng trong 14 ngày"
+        value={number.format(window.recent_jobs)}
+        note={`14 ngày trước: ${number.format(window.previous_jobs)} tin · chênh lệch chủ yếu do độ phủ thu thập, không phải cầu giảm`} />
     </div>
 
     <section className="panel">
       <div className="panel-heading">
-        <div><h2>Số tin theo tuần đăng</h2><p>Dựa trên ngày đăng của tin đã hợp nhất; tuần có ít tin có thể là tuần ít nguồn được cào</p></div>
+        <div><h2>Kỹ năng đang lên</h2><p>So tỷ trọng tin có kỹ năng đó trong 14 ngày gần nhất với 14 ngày trước; bấm một dòng để xem tin</p></div>
+        <span className="muted-badge">{window.recent_days} ngày gần nhất</span>
+      </div>
+      <MomentumList rows={skills} empty="Chưa đủ tin trong 14 ngày để tính xu hướng kỹ năng." onSelect={onSkill} />
+    </section>
+
+    <section className="panel">
+      <div className="panel-heading">
+        <div><h2>Chuyên môn đang lên</h2><p>Cùng cách tính: tỷ trọng trong 14 ngày qua so với 14 ngày trước</p></div>
+      </div>
+      <MomentumList rows={domains} empty="Chưa đủ tin trong 14 ngày để tính xu hướng chuyên môn." />
+    </section>
+
+    <section className="panel">
+      <div className="panel-heading">
+        <div><h2>Số tin theo tuần đăng</h2><p>Bối cảnh khối lượng: tuần ít tin có thể là tuần ít nguồn được cào, không phải thị trường thu hẹp</p></div>
         <span className="muted-badge">{chartWeeks.length} tuần gần nhất</span>
       </div>
       {chartWeeks.length === 0
@@ -1004,7 +1059,6 @@ function Trends({ data }: { data: TrendsResponse }) {
           </div>
         })}
       </div>
-      <p className="panel-note">Số tin của một ngày là release công bố sau cùng trong ngày đó. Chênh lệch âm nghĩa là cohort thu hẹp sau khi sửa dữ liệu, không phải mất nguồn.</p>
     </section>
   </>
 }
@@ -1118,30 +1172,29 @@ function toJobFilters(filters: AssistantFilters): Filters {
   return mapped
 }
 
-type ChatMessage = {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  answer?: AssistantAnswer
-  question?: string
-  failed?: boolean
-}
 
 function Assistant({ status, onOpenJob, onSearchJobs }: {
   status: AssistantStatus | null
   onOpenJob: (jobId: string) => void
   onSearchJobs: (filters: Filters) => void
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [input, setInput] = useState('')
+  // The panel unmounts on every navigation and the page reloads often: the conversation is
+  // restored from storage so a reader does not lose three questions by opening another tab.
+  const restored = useRef(loadChat())
+  const [messages, setMessages] = useState<ChatMessage[]>(restored.current.messages)
+  const [input, setInput] = useState(restored.current.input)
   const [busy, setBusy] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
   const controllerRef = useRef<AbortController | null>(null)
   const abortReason = useRef<'cancel' | 'timeout' | null>(null)
-  const counter = useRef(0)
-  const nextId = () => `msg-${counter.current++}`
+  const counter = useRef(restored.current.messages.length)
+  const nextId = () => `msg-${Date.now()}-${counter.current++}`
+
+  useEffect(() => {
+    saveChat({ messages, input })
+  }, [messages, input])
 
   useEffect(() => {
     if (!busy) {
@@ -1229,6 +1282,16 @@ function Assistant({ status, onOpenJob, onSearchJobs }: {
       <span className={ready ? 'status-pill ok' : 'status-pill'}>
         {ready ? 'Đang hoạt động' : 'Chưa sẵn sàng'}
       </span>
+      {messages.length > 0 && <button
+        type="button"
+        className="button small chat-clear"
+        onClick={() => {
+          clearChat()
+          setMessages([])
+          setInput('')
+          setError('')
+        }}
+      >Xoá hội thoại</button>}
     </div>
     <p className="assistant-sub">{ready
       ? 'Đặt câu hỏi về lương, kỹ năng, địa điểm hoặc doanh nghiệp.'
