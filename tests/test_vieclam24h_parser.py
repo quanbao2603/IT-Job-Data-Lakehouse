@@ -273,6 +273,23 @@ class TestVieclam24hFetchJobs(unittest.TestCase):
         self.assertNotIn(cards[1]["job_id"], ids)
         self.assertEqual(ids, [cards[0]["job_id"], cards[2]["job_id"]])
 
+    def test_watermark_filtered_page_counts_as_confirmed_empty(self):
+        """Trang toàn tin cũ hơn mốc = "hôm nay không có tin mới", không phải lỗi nguồn.
+
+        Đêm 27/11 vieclam24h fail vì run() thấy 0 bản ghi mà không có cờ xác nhận, dù crawler
+        đã lọc đúng theo watermark.
+        """
+        with patch.object(self.crawler, "_make_request", side_effect=self._mock()), \
+             patch("src.crawlers.vieclam24h_crawler.time.sleep"):
+            list(self.crawler.fetch_jobs(
+                mode="incremental", max_pages=1,
+                watermark_ts="2099-12-31T00:00:00Z",
+                last_record_id=None))
+        self.assertTrue(
+            getattr(self.crawler, "_empty_result_confirmed", False),
+            "phải đánh dấu đã xác nhận để run() không coi là nguồn lỗi",
+        )
+
     def test_incremental_future_watermark_yields_nothing(self):
         with patch.object(self.crawler, "_make_request", side_effect=self._mock()), \
              patch("src.crawlers.vieclam24h_crawler.time.sleep"):

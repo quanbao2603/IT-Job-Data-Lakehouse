@@ -467,6 +467,8 @@ class VietnamDevsCrawler(BaseCrawler):
                 time.sleep(random.uniform(self.REQUEST_DELAY_MIN, self.REQUEST_DELAY_MAX))
 
             if yielded_this_page == 0:
+                # All cards filtered by the watermark = confirmed "nothing new", not an error.
+                self._empty_result_confirmed = True
                 print(f"      [!] Trang {page} không còn tin mới. Dừng quét.")
                 break
             time.sleep(random.uniform(0.8, 1.2))

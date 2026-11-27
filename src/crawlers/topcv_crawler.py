@@ -538,12 +538,14 @@ class TopCVCrawler(BaseCrawler):
                     print(f"      📊 TOPCV XÁC NHẬN: {header_count.strip()}")
 
             job_links = []
+            links_seen = 0
             for a in soup.find_all('a', href=re.compile(r'/viec-lam/[^/]+/\d+\.html')):
                 href = a.get('href', '').split('?')[0]
                 if href and href not in seen:
                     seen.add(href)
                     jid = self._extract_job_id(href)
 
+                    links_seen += 1
                     if mode == "incremental" and last_record_id and str(jid) == str(last_record_id):
                         # TopCV promotes paid listings, so the boundary card can sit at the top of
                         # page 1. Skipping it (not stopping) is what keeps the day's new jobs.
@@ -556,6 +558,12 @@ class TopCVCrawler(BaseCrawler):
             self.heartbeat()
 
             if not job_links:
+                if links_seen:
+                    # Cards existed but every one was older than the watermark: a confirmed
+                    # "nothing new today", which must not be reported as a parser failure.
+                    self._empty_result_confirmed = True
+                    print(f"      [!] Trang {page} chỉ còn tin cũ hơn mốc. Dừng quét.")
+                    break
                 if page == 1:
                     require_listing_data(
                         getattr(self, "source_name", "topcv"),

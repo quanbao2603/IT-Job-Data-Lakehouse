@@ -200,6 +200,30 @@ class TestCareerVietFetchJobsIncremental(CrossClassCrawlerMixin, unittest.TestCa
         self.assertNotIn(stop_mark, ids)
         self.assertGreater(len(ids), 2, "các thẻ sau mốc vẫn phải được cào")
 
+    def test_watermark_filtered_page_counts_as_confirmed_empty(self):
+        """Trang toàn tin cũ hơn mốc = "hôm nay không có tin mới", không phải lỗi nguồn.
+
+        Đêm 27/11 vieclam24h fail vì run() thấy 0 bản ghi mà không có cờ xác nhận, dù crawler
+        đã lọc đúng theo watermark.
+        """
+        # chỉ giữ các thẻ CÓ ngày (cũ hơn mốc) để mô phỏng trang bị lọc sạch
+        dated = [c for c in self.crawler._parse_cards(self.list_html) if c["updated_iso"]]
+
+        def fake_request(url, **kw):
+            return self.list_html if "/viec-lam/" in url and "tim-viec-lam" not in url else self.detail_html
+
+        with patch.object(self.crawler, "_parse_cards", return_value=dated), \
+             patch.object(self.crawler, "_make_request", side_effect=fake_request), \
+             patch("src.crawlers.careerviet_crawler.time.sleep", return_value=None):
+            list(self.crawler.fetch_jobs(
+                mode="incremental", max_pages=1,
+                watermark_ts="2099-12-31T00:00:00Z",
+                last_record_id=None))
+        self.assertTrue(
+            getattr(self.crawler, "_empty_result_confirmed", False),
+            "phải đánh dấu đã xác nhận để run() không coi là nguồn lỗi",
+        )
+
     def test_incremental_skips_old_cards_but_keeps_undated_ones(self):
         """A card older than the watermark is skipped; a card with no date is kept.
 

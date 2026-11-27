@@ -300,12 +300,14 @@ class ITViecCrawler(BaseCrawler):
 
             job_links = soup.find_all('a', href=re.compile(r'/it-jobs/[a-zA-Z0-9\-]+-\d+'))
             page_urls = []
+            links_seen = 0
             for a in job_links:
                 href = a.get('href', '')
                 if href:
                     full_u = urljoin(self.BASE_URL, href.split('?')[0])
                     jid = self._extract_job_id(full_u)
 
+                    links_seen += 1
                     if is_incremental and last_record_id and str(jid) == str(last_record_id):
                         # The listing is not guaranteed chronological, so the boundary card only
                         # means "this one is old" — everything else on the page still counts.
@@ -319,6 +321,10 @@ class ITViecCrawler(BaseCrawler):
             self.heartbeat()
 
             if not page_urls:
+                if links_seen:
+                    self._empty_result_confirmed = True
+                    print(f"      [!] Trang {page} chỉ còn tin cũ hơn mốc. Dừng quét.")
+                    break
                 if page == 1:
                     require_listing_data(
                         getattr(self, "source_name", "itviec"),

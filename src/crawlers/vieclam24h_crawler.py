@@ -560,6 +560,10 @@ class Vieclam24hCrawler(BaseCrawler):
                 time.sleep(random.uniform(self.REQUEST_DELAY_MIN, self.REQUEST_DELAY_MAX))
 
             if collected_this_page == 0:
+                # Every card on this page was filtered by the watermark: that is a confirmed
+                # "nothing new today", not a parser failure. Without this flag run() treated the
+                # empty result as a source error and the whole nightly task failed.
+                self._empty_result_confirmed = True
                 print(f"      [!] Trang {page} không còn tin mới. Dừng quét.")
                 break
             if page < last_page:
