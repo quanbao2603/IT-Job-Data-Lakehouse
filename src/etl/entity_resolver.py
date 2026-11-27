@@ -230,6 +230,10 @@ class EntityResolver:
             description=observation.get("job_description_clean") or observation.get("description_normalized"),
             content_hash=observation.get("content_hash"),
         )
+        # Bind the source posting to the entity it just created. Without this, the next replay of
+        # the same posting re-enters _create_distinct (nothing links source_job_id to the entity),
+        # mints a second entity from the new observation_id, and the cohort grows on every replay.
+        self.registry.bind_source_job(platform, source_job_id, unified_id, observed_at)
         result = MatchResult(unified_id, None, method, score, "DISTINCT_ENTITY")
         self._record_observation(observation, unified_id, canonical_url)
         self._record_link(observation, result, previous_unified_job_id=previous_unified_id)
