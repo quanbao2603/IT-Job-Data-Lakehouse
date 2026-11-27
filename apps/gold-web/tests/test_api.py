@@ -134,6 +134,32 @@ class TestGoldWebAPI(unittest.TestCase):
         self.assertIn("14 days", where_recent)
         self.assertEqual(values_all, values_recent)
 
+    def test_multiple_skills_are_anded_in_the_repository(self):
+        """?skills=sql,python means "asks for SQL AND Python", not a single-skill filter."""
+        from server.repository import GoldRepository
+        from server.schemas import FilterParams
+
+        params = FilterParams(skills="python, aws,python")
+        self.assertEqual(params.skill_codes, ["python", "aws"], "phải khử trùng lặp, giữ thứ tự")
+
+        where, values = GoldRepository._where(params)
+        self.assertEqual(where.count("EXISTS (SELECT 1 FROM gold.v_job_skill"), 2)
+        self.assertIn("AND", where)
+        self.assertEqual(values, ["python", "aws"])
+
+    def test_single_skill_parameter_still_works(self):
+        """The old `?skill=` links (agent deep links, bookmarks) must keep working."""
+        from server.repository import GoldRepository
+        from server.schemas import FilterParams
+
+        where, values = GoldRepository._where(FilterParams(skill="java"))
+        self.assertEqual(values, ["java"])
+        self.assertIn("gold.v_job_skill", where)
+
+    def test_skills_endpoint_accepts_csv(self):
+        response = self.client.get("/api/jobs?skills=sql,python&page_size=1")
+        self.assertEqual(response.status_code, 200)
+
     def test_scope_rejects_unknown_value(self):
         response = self.client.get("/api/dashboard?scope=everything")
         self.assertEqual(response.status_code, 422)

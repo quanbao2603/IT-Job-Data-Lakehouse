@@ -22,6 +22,7 @@ except ImportError:
 
 from src.crawlers.base_crawler import (
     BaseCrawler,
+    element_text,
     CrawlerSourceError,
     emit_cli_result,
     incremental_scan_pages,
@@ -312,7 +313,7 @@ class DevworkCrawler(BaseCrawler):
 
         # Title
         h2 = content_div.find(["h1", "h2"])
-        job_title = h2.get_text(strip=True) if h2 else card["job_title"]
+        job_title = element_text(h2) or card["job_title"]
 
         # Company name
         company_name = card["company_name"]

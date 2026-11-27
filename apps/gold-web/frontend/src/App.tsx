@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { prettyCompany, prettyText } from './format'
 import {
   AlertCircle, ArrowRight, Bot, Building2, BriefcaseBusiness, CheckCircle2, Coins,
-  Download, ExternalLink, Info, LayoutDashboard, Lock, RefreshCw, Search, ShieldCheck,
+  ChevronDown, Download, ExternalLink, Info, LayoutDashboard, Lock, RefreshCw, Search, ShieldCheck,
   Sparkles, Tags, TrendingUp, X,
 } from 'lucide-react'
 import {
@@ -42,6 +43,11 @@ const PAGE_SUBTITLES: Record<Page, string> = {
   assistant: 'Đặt câu hỏi về lương, kỹ năng, địa điểm hoặc doanh nghiệp.',
 }
 const initialFilters: Filters = { page: 1, page_size: 12, sort: 'recent' }
+function selectedSkills(filters: Filters): string[] {
+  const raw = filters.skills ?? filters.skill ?? ''
+  return raw.split(',').map((code) => code.trim()).filter(Boolean)
+}
+
 const money = new Intl.NumberFormat('vi-VN')
 const number = new Intl.NumberFormat('vi-VN')
 
@@ -258,7 +264,7 @@ export default function App() {
   const goToPage = (next: number) => setFilters((current) => ({ ...current, page: next }))
 
   const drillToSkill = (code: string) => {
-    setFilters({ ...initialFilters, skill: code })
+    setFilters({ ...initialFilters, skills: code })
     setPage('jobs')
   }
   const drillToCompany = (key: string) => {
@@ -275,7 +281,9 @@ export default function App() {
     if (filters.city) entries.push(['city', labelFor(options?.cities, filters.city)])
     if (filters.domain) entries.push(['domain', labelFor(options?.domains, filters.domain)])
     if (filters.level) entries.push(['level', labelFor(options?.levels, filters.level)])
-    if (filters.skill) entries.push(['skill', labelFor(options?.skills, filters.skill)])
+    for (const code of selectedSkills(filters)) {
+      entries.push([`skills:${code}` as keyof Filters, labelFor(options?.skills, code)])
+    }
     if (filters.company_key) entries.push(['company_key', 'Công ty đã chọn'])
     return entries
   }, [filters, options])
@@ -383,7 +391,15 @@ export default function App() {
           filters={filters}
           options={options}
           updateFilter={updateFilter}
-          clearOne={(key) => updateFilter(key, '')}
+          clearOne={(key) => {
+            if (String(key).startsWith('skills:')) {
+              const drop = String(key).slice('skills:'.length)
+              const left = selectedSkills(filters).filter((code) => code !== drop)
+              setFilters((current) => ({ ...current, skills: left.join(',') || undefined, skill: undefined, page: 1 }))
+              return
+            }
+            updateFilter(key, '')
+          }}
           reset={resetFilters}
           chips={activeChips}
         />}
@@ -463,6 +479,7 @@ function FilterBar({ filters, options, updateFilter, clearOne, reset, chips }: {
   reset: () => void
   chips: [keyof Filters, string][]
 }) {
+  const chosen = selectedSkills(filters)
   return <section className="filter-panel">
     <div className="filter-bar">
       <span className="filter-title"><Search size={14} aria-hidden /> Bộ lọc</span>
@@ -495,11 +512,34 @@ function FilterBar({ filters, options, updateFilter, clearOne, reset, chips }: {
         <option value="all">Mọi thời điểm</option>
         <option value="recent">Cập nhật 14 ngày</option>
       </select>
-      <select value={filters.skill ?? ''} onChange={(e) => updateFilter('skill', e.target.value)} aria-label="Lọc theo kỹ năng">
-        <option value="">Mọi kỹ năng</option>
-        {filters.skill && !(options?.skills ?? []).some((item) => item.value === filters.skill) && <option value={filters.skill}>{filters.skill}</option>}
-        {(options?.skills ?? []).map((item) => <option key={item.value} value={item.value}>{item.label} ({number.format(item.count)})</option>)}
-      </select>
+      <details className="multi-select">
+        <summary aria-label="Lọc theo kỹ năng">
+          <span>{chosen.length === 0 ? 'Mọi kỹ năng' : `${chosen.length} kỹ năng`}{chosen.length === 0 ? '' : ` · ${chosen.map((code) => options?.skills.find((item) => item.value === code)?.label ?? code).join(', ')}`}</span>
+          <ChevronDown size={14} aria-hidden />
+        </summary>
+        <div className="multi-select-panel" role="group" aria-label="Chọn kỹ năng">
+          {chosen.length > 0 && (
+            <button type="button" className="button small clear-skills" onClick={() => updateFilter('skills', '')}>Bỏ chọn tất cả</button>
+          )}
+          {(options?.skills ?? []).map((item) => {
+            const picked = chosen.includes(item.value)
+            return <label key={item.value} className={picked ? 'picked' : ''}>
+              <input
+                type="checkbox"
+                checked={picked}
+                onChange={() => {
+                  const next = picked
+                    ? chosen.filter((code) => code !== item.value)
+                    : [...chosen, item.value]
+                  updateFilter('skills', next.join(','))
+                }}
+              />
+              <span>{item.label}</span>
+              <em>{number.format(item.count)}</em>
+            </label>
+          })}
+        </div>
+      </details>
       <button type="button" className="button small" onClick={reset} disabled={chips.length === 0}>Xóa lọc</button>
     </div>
     {chips.length > 0 && <div className="chips active-chips">
@@ -703,20 +743,20 @@ function Jobs({ data, sort, onSort, onSelect, onExport, onPage }: {
         >
           <span className="initials" aria-hidden>{initials(job.company_display_name)}</span>
           <div className="job-main">
-            <span className="job-domain">{bucketLabel(display(job.job_domain))}</span>
+            <span className="job-domain">{prettyText(bucketLabel(display(job.job_domain)))}</span>
             {job.days_since_last_seen != null && job.days_since_last_seen > 14 && (
               <span className="source-tag" title="Lần ghi nhận cuối đã quá 14 ngày">cũ {job.days_since_last_seen} ngày</span>
             )}
-            <h2>{job.canonical_title}</h2>
-            <p className="company-name">{job.company_display_name}</p>
+            <h2>{prettyText(job.canonical_title)}</h2>
+            <p className="company-name">{prettyCompany(job.company_display_name)}</p>
             <div className="job-meta">
-              <span><em>Địa điểm</em>{bucketLabel(display(job.city_bucket))}</span>
+              <span><em>Địa điểm</em>{prettyText(bucketLabel(display(job.city_bucket)))}</span>
               <span><em>Cấp bậc</em>{bucketLabel(display(job.job_level))}</span>
               <span><em>Hình thức</em>{bucketLabel(display(job.work_mode))}</span>
             </div>
             <div className="skill-tags">
               {job.skills.length === 0 && <span className="muted">Chưa ghi nhận kỹ năng</span>}
-              {job.skills.slice(0, 6).map((skill) => <span key={skill.skill_code}>{skill.skill_name}</span>)}
+              {job.skills.slice(0, 6).map((skill) => <span key={skill.skill_code}>{prettyText(skill.skill_name)}</span>)}
               {job.skills.length > 6 && <span className="more-tag">+{job.skills.length - 6} kỹ năng</span>}
               {job.platforms.slice(0, 2).map((platform) => <span className="source-tag" key={platform}>{platform}</span>)}
             </div>
@@ -764,7 +804,7 @@ function Skills({ data, onSkill }: { data: SkillsResponse; onSkill: (code: strin
           </div>
           {data.items.length === 0 && <p className="muted" style={{ padding: '0 21px 18px' }}>Chưa có kỹ năng trong cohort này.</p>}
           {data.items.slice(0, 20).map((item) => <button type="button" className="rank-row clickable skill-columns" key={item.skill_code} onClick={() => onSkill(item.skill_code)}>
-            <span className="rank-name">{item.skill_name}</span>
+            <span className="rank-name">{prettyText(item.skill_name)}</span>
             <strong className="num">{number.format(item.job_count)}</strong>
             <span className="skill-share">
               <span className="bar-track"><span style={{ width: `${Math.max(3, (item.job_count / max) * 100)}%` }} /></span>
@@ -823,7 +863,7 @@ function Companies({ data, onSelect, onPage }: { data: CompaniesResponse; onSele
     <ReleaseNote meta={data.meta} />
     {openKey && <section className="panel company-profile">
       <div className="panel-heading">
-        <div><h2>{profile ? profile.company_name : 'Cấu trúc doanh nghiệp'}</h2>
+        <div><h2>{profile ? prettyCompany(profile.company_name) : 'Cấu trúc doanh nghiệp'}</h2>
           <p>{profile ? `${number.format(profile.jobs)} tin · ${number.format(profile.salary_samples)} mẫu lương${profile.salary_median ? ` · trung vị ${formatMoney(profile.salary_median)}` : ''}` : 'Đang tải…'}</p></div>
         <button type="button" className="button small" onClick={() => { setOpenKey(null); setProfile(null) }}>Đóng</button>
       </div>
@@ -861,7 +901,7 @@ function Companies({ data, onSelect, onPage }: { data: CompaniesResponse; onSele
     <div className="company-grid">
       {data.items.map((item) => <button type="button" className="company-card" key={item.company_key} onClick={() => onSelect(item.company_key)}>
         <span className="initials" aria-hidden>{initials(item.company_name)}</span>
-        <h2>{item.company_name}</h2>
+        <h2>{prettyCompany(item.company_name)}</h2>
         <div className="company-stat">
           <div><strong>{number.format(item.job_count)}</strong><span>tin tuyển dụng</span></div>
           <div><strong>{number.format(item.city_count)}</strong><span>địa điểm</span></div>
@@ -1374,9 +1414,9 @@ function JobModal({ jobId, releaseId, onClose }: { jobId: string; releaseId?: st
       {error && <p className="muted">{error}</p>}
       {!job && !error && <p className="muted"><RefreshCw className="spin" size={16} aria-hidden /> Đang tải chi tiết…</p>}
       {job && <>
-        <span className="job-domain">{display(job.job_domain)}</span>
-        <h2>{job.canonical_title}</h2>
-        <p className="company-name">{job.company_display_name}</p>
+        <span className="job-domain">{prettyText(display(job.job_domain))}</span>
+        <h2>{prettyText(job.canonical_title)}</h2>
+        <p className="company-name">{prettyCompany(job.company_display_name)}</p>
         <div className="detail-grid">
           <div><small>Địa điểm</small><b>{display(job.city_bucket)}</b></div>
           <div><small>Cấp bậc</small><b>{display(job.job_level)}</b></div>
@@ -1389,7 +1429,7 @@ function JobModal({ jobId, releaseId, onClose }: { jobId: string; releaseId?: st
         </div>
         <h3>Kỹ năng</h3>
         <div className="skill-tags large">
-          {job.skills.length ? job.skills.map((skill) => <span key={skill.skill_code}>{skill.skill_name}</span>) : <span>Chưa xác định</span>}
+          {job.skills.length ? job.skills.map((skill) => <span key={skill.skill_code}>{prettyText(skill.skill_name)}</span>) : <span>Chưa xác định</span>}
         </div>
         {(job.posted_date || job.expired_date) && <div className="detail-grid">
           {job.posted_date && <div><small>Ngày đăng</small><b>{formatDay(job.posted_date)}</b></div>}

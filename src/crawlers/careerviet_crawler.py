@@ -20,6 +20,7 @@ except ImportError:
 
 from src.crawlers.base_crawler import (
     BaseCrawler,
+    element_text,
     CrawlerSourceError,
     emit_cli_result,
     incremental_scan_pages,
@@ -319,7 +320,7 @@ class CareerVietCrawler(BaseCrawler):
         ld = self._extract_json_ld_job(html)
 
         h1 = soup.find("h1")
-        job_title = (self._unq(ld.get("title")) or (h1.get_text(strip=True) if h1 else "")) or card["job_title"]
+        job_title = (self._unq(ld.get("title")) or element_text(h1)) or card["job_title"]
 
         org = ld.get("hiringOrganization") or {}
         company_name = self._unq(org.get("name")) or card["company_name"]

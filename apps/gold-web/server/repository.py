@@ -200,7 +200,10 @@ class GoldRepository:
             # Default is "everything the lakehouse knows" (maximum data). The recent scope
             # is opt-in and uses the same window the Gold contract declares as evidence.
             clauses.append(f"{snapshot_alias}.last_seen_at >= NOW() - INTERVAL '{EVIDENCE_WINDOW_DAYS} days'")
-        if params.skill:
+        selected_skills = params.skill_codes
+        for skill_code in selected_skills:
+            # One EXISTS per selected skill, ANDed: "jobs that ask for Python AND AWS".
+            # ORing them would return nearly the whole cohort and answer nothing.
             clauses.append(
                 f"EXISTS (SELECT 1 FROM gold.v_job_skill sf "
                 f"JOIN gold.dim_skill sd ON sd.skill_key = sf.skill_key "
@@ -208,7 +211,7 @@ class GoldRepository:
                 f"AND sf.snapshot_date = {snapshot_alias}.snapshot_date "
                 f"AND sd.skill_code = %s AND NOT sd.is_unknown)"
             )
-            values.append(params.skill)
+            values.append(skill_code)
         return (" AND ".join(clauses) if clauses else "TRUE"), values
 
     def _assert_expected_release(self, context: ReleaseContext, params: FilterParams) -> None:

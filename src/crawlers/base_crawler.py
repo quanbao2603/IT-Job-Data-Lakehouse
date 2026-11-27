@@ -1,4 +1,5 @@
 import abc
+import re
 import json
 import os
 import uuid
@@ -17,6 +18,19 @@ class CrawlerSourceError(RuntimeError):
     """A source request or parser failure that must fail the ingestion run."""
 
 
+
+
+def element_text(element) -> str:
+    """Text of one element with child-node boundaries kept as spaces.
+
+    `get_text(strip=True)` concatenates sibling nodes with no separator, which is how
+    "trợ lý dự án" + "công nghệ thông tin" became "dự áncông nghệ" and "thực tập sinh" +
+    "qc (travel tech)" became "sinhqc". The separator must be an explicit space.
+    """
+    if element is None:
+        return ""
+    text = element.get_text(" ", strip=True)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def incremental_scan_pages(mode: str, max_pages: int, source_name: str = "source") -> int:

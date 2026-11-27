@@ -21,6 +21,7 @@ except ImportError:
 
 from src.crawlers.base_crawler import (
     BaseCrawler,
+    element_text,
     CrawlerSourceError,
     emit_cli_result,
     incremental_scan_pages,
@@ -386,7 +387,7 @@ class TopCVCrawler(BaseCrawler):
         soup = BeautifulSoup(html_content, 'html.parser')
 
         title_elem = soup.find('h1', class_=re.compile(r'job-title|title', re.I)) or soup.find('h1')
-        job_title = title_elem.get_text(strip=True) if title_elem else ""
+        job_title = element_text(title_elem)
 
         company_name = self._extract_company_name(soup)
 

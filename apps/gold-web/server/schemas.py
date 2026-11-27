@@ -14,6 +14,9 @@ class FilterParams(BaseModel):
     domain: str | None = Field(default=None, max_length=200)
     level: str | None = Field(default=None, max_length=100)
     skill: str | None = Field(default=None, max_length=120)
+    # Multi-select arrives as one comma-separated value (`?skills=python,aws`) because a Pydantic
+    # model read through Depends() turns `list[str]` into a single "<factory>" placeholder.
+    skills: str | None = Field(default=None, max_length=600)
     company_key: str | None = Field(default=None, max_length=200)
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=12, ge=1, le=50)
@@ -21,12 +24,24 @@ class FilterParams(BaseModel):
     scope: Literal["all", "recent"] = "all"
     expected_release_id: str | None = Field(default=None, max_length=300)
 
+
     @field_validator("q", "city", "domain", "level", "skill", "company_key", mode="before")
     @classmethod
     def blank_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @property
+    def skill_codes(self) -> list[str]:
+        """Selected skills, deduplicated, in the order the caller sent them."""
+        raw = self.skills or self.skill or ""
+        seen: list[str] = []
+        for part in str(raw).split(","):
+            code = part.strip()
+            if code and code not in seen:
+                seen.append(code)
+        return seen
 
 
 class ReleaseMeta(BaseModel):

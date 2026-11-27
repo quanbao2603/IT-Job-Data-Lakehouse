@@ -19,6 +19,8 @@ export type Filters = {
   domain?: string
   level?: string
   skill?: string
+  /** CSV of skill codes; the API keeps jobs carrying every one of them. */
+  skills?: string
   company_key?: string
   page?: number
   page_size?: number
@@ -113,6 +115,8 @@ export type AssistantFilters = {
   job_domain?: string
   job_levels?: string[]
   skill?: string
+  /** CSV of skill codes; the API keeps jobs carrying every one of them. */
+  skills?: string
   company?: string
   salary_only?: boolean
   recent_days?: number

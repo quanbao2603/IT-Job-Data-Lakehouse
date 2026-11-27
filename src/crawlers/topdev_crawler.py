@@ -20,6 +20,7 @@ except ImportError:
 
 from src.crawlers.base_crawler import (
     BaseCrawler,
+    element_text,
     CrawlerSourceError,
     emit_cli_result,
     incremental_scan_pages,
@@ -369,10 +370,10 @@ class TopDevCrawler(BaseCrawler):
         job_id = self._extract_job_id(job_url)
 
         h1 = soup.find("h1")
-        job_title = h1.get_text(strip=True) if h1 else ""
+        job_title = element_text(h1)
 
         comp_elem = soup.find(class_=re.compile(r"company-name|company__name"))
-        company_name = comp_elem.get_text(strip=True) if comp_elem else ""
+        company_name = element_text(comp_elem)
 
         content = self._clean_html(str(soup.find("div", class_=re.compile(r"job-detail|content|detail-content")) or ""))
         hash_src = f"{job_title}|{company_name}|{content[:200]}"

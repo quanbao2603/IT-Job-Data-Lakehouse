@@ -20,6 +20,7 @@ except ImportError:
 
 from src.crawlers.base_crawler import (
     BaseCrawler,
+    element_text,
     CrawlerSourceError,
     emit_cli_result,
     incremental_scan_pages,
@@ -216,7 +217,7 @@ class VietnamDevsCrawler(BaseCrawler):
 
             # Job title from h2
             h2 = card_el.find("h2")
-            job_title = h2.get_text(strip=True) if h2 else link.get_text(strip=True)
+            job_title = element_text(h2) or element_text(link)
 
             # Company name: p.font-extrabold > span.truncate
             company_name = ""
